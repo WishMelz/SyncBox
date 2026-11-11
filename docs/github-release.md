@@ -11,9 +11,9 @@ DOCKERHUB_USERNAME=你的 Docker Hub 用户名
 DOCKERHUB_TOKEN=Docker Hub Access Token
 ```
 
-`DOCKERHUB_TOKEN` 使用 Docker Hub 的 Access Token，不要填写 Docker Hub 登录密码。Android 当前使用 Flutter 默认测试签名；如果要发布可直接分发的 APK，再补充正式 keystore 和签名配置。
+`DOCKERHUB_TOKEN` 使用 Docker Hub 的 Access Token，不要填写 Docker Hub 登录密码。发布流程不需要配置任何 Android 或 Apple 签名 Secrets：Android 使用 runner 临时生成的测试 key，iOS/macOS 直接生成未签名测试包，Windows 直接打包。
 
-Apple IPA 和 macOS 包目前按未签名构建，适合测试。当前工作流还没有注入 Apple 签名证书；要发布到 TestFlight 或让用户直接安装，需要先把证书、Provisioning Profile 导入步骤加入 macOS 工作流，再配置相应的 GitHub Secrets。
+这些产物用于个人部署和测试；iOS IPA、macOS ZIP 若要提交商店或直接安装到受限设备，仍需在后续流程中自行重签。
 
 ## 自动流程
 
