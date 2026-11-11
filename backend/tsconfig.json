@@ -1,0 +1,10 @@
+{
+  "compilerOptions": {
+    "module": "commonjs", "target": "ES2023", "moduleResolution": "node",
+    "experimentalDecorators": true, "emitDecoratorMetadata": true,
+    "esModuleInterop": true, "strict": true, "skipLibCheck": true,
+    "noUncheckedIndexedAccess": true, "forceConsistentCasingInFileNames": true,
+    "outDir": "dist", "sourceMap": true, "types": ["node", "multer"]
+  },
+  "include": ["src/**/*.ts"]
+}

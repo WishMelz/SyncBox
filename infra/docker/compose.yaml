@@ -1,0 +1,21 @@
+services:
+  syncbox:
+    image: syncbox:latest
+    build:
+      context: ../..
+      dockerfile: backend/Dockerfile
+    ports:
+      - "${SYNCBOX_PORT:-8080}:3000"
+    environment:
+      TRUST_PROXY: "true"
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_PATH: /app/backend/data/syncbox.sqlite
+      STATIC_DIR: /app/frontend
+    volumes:
+      - syncbox-data:/app/backend/data
+    init: true
+    stop_grace_period: 15s
+volumes:
+  syncbox-data:

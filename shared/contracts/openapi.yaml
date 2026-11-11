@@ -1,0 +1,990 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "SyncBox API",
+    "version": "0.5.0",
+    "description": "Same-account multi-device messaging. Bearer session tokens expire after 7 days. See docs/api/README.md for semantics."
+  },
+  "servers": [{ "url": "/api/v1" }],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/auth/login": {
+      "post": {
+        "operationId": "login",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Session" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "429": { "description": "Rate limited" },
+          "401": { "description": "Invalid credentials" }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Login" } } }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "operationId": "getCurrentUser",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/User" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "429": { "description": "Rate limited" },
+          "401": { "description": "Missing or expired session" }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "operationId": "logout",
+        "responses": {
+          "204": { "description": "Success" },
+          "400": { "description": "Invalid input" },
+          "429": { "description": "Rate limited" },
+          "401": { "description": "Missing or expired session" }
+        }
+      }
+    },
+    "/devices": {
+      "post": {
+        "operationId": "registerDevice",
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Device" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "429": { "description": "Rate limited" },
+          "401": { "description": "Missing or expired session" },
+          "409": { "description": "指定设备 ID 已绑定不同安装标识或平台" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/RegisterDevice" } }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listDevices",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/Device" }
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "429": { "description": "Rate limited" },
+          "401": { "description": "Missing or expired session" }
+        }
+      }
+    },
+    "/devices/heartbeat": {
+      "post": {
+        "operationId": "heartbeatDevice",
+        "responses": {
+          "204": { "description": "Updated current device activity" },
+          "401": { "description": "Missing or expired session" }
+        }
+      }
+    },
+    "/devices/{id}": {
+      "delete": {
+        "operationId": "removeDevice",
+        "responses": {
+          "204": { "description": "Success" },
+          "400": { "description": "Invalid input" },
+          "429": { "description": "Rate limited" },
+          "401": { "description": "Missing or expired session" },
+          "404": { "description": "Not found or not owned by user" }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ]
+      }
+    },
+    "/messages": {
+      "post": {
+        "operationId": "sendMessage",
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Message" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "429": { "description": "Rate limited" },
+          "401": { "description": "Missing or expired session" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CreateMessage" } }
+          }
+        }
+      },
+      "get": {
+        "operationId": "listMessages",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/MessageList" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "429": { "description": "Rate limited" },
+          "401": { "description": "Missing or expired session" }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 1000000, "default": 1 }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": { "type": "string", "maxLength": 200 },
+            "description": "关键词，匹配内容、批注及附件文件名；会话列表也匹配会话标题。"
+          },
+          {
+            "name": "source",
+            "in": "query",
+            "schema": { "type": "string", "maxLength": 80 }
+          },
+          {
+            "name": "isRead",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["true", "false"] }
+          },
+          {
+            "name": "isStarred",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["true", "false"] }
+          }
+        ]
+      }
+    },
+    "/messages/files": {
+      "get": {
+        "operationId": "listFiles",
+        "responses": {
+          "200": {
+            "description": "Paginated file metadata",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/FileList" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "401": { "description": "Missing or expired session" }
+        },
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1, "default": 1 } },
+          { "name": "pageSize", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } },
+          { "name": "q", "in": "query", "schema": { "type": "string", "maxLength": 200 }, "description": "匹配文件名、所属会话或消息正文。" },
+          { "name": "kind", "in": "query", "schema": { "type": "string", "enum": ["image", "attachment"] } }
+        ]
+      }
+    },
+    "/messages/{id}": {
+      "get": {
+        "operationId": "getMessage",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Message" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "429": { "description": "Rate limited" },
+          "401": { "description": "Missing or expired session" },
+          "404": { "description": "Not found or not owned by user" }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "updateMessage",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Message" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "429": { "description": "Rate limited" },
+          "401": { "description": "Missing or expired session" },
+          "404": { "description": "Not found or not owned by user" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/UpdateMessage" } }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ]
+      },
+      "delete": {
+        "operationId": "deleteMessage",
+        "responses": {
+          "204": { "description": "Success" },
+          "400": { "description": "Invalid input" },
+          "429": { "description": "Rate limited" },
+          "401": { "description": "Missing or expired session" },
+          "404": { "description": "Not found or not owned by user" }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ]
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "service": { "type": "string" },
+                    "database": { "type": "string" }
+                  },
+                  "additionalProperties": false
+                }
+              }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "429": { "description": "Rate limited" },
+          "503": { "description": "Database unavailable" }
+        },
+        "security": []
+      }
+    },
+    "/conversations": {
+      "get": {
+        "operationId": "get_conversations",
+        "responses": {
+          "200": { "description": "Success" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Not found or not owned" }
+        },
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 1000000, "default": 1 }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": { "type": "string", "maxLength": 200 },
+            "description": "关键词，匹配内容、批注及附件文件名；会话列表也匹配会话标题。"
+          }
+        ]
+      },
+      "post": {
+        "operationId": "post_conversations",
+        "responses": {
+          "201": { "description": "Success" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Not found or not owned" }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["title"],
+                "properties": { "title": { "type": "string", "minLength": 1, "maxLength": 80 } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversations/{id}": {
+      "get": {
+        "operationId": "get_conversations_byId",
+        "responses": {
+          "200": { "description": "Success" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Not found or not owned" }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ]
+      },
+      "patch": {
+        "operationId": "patch_conversations_byId",
+        "responses": {
+          "200": { "description": "Success" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Not found or not owned" }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "title": { "type": "string", "minLength": 1, "maxLength": 80 },
+                  "pinned": { "type": "boolean" }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "operationId": "delete_conversations_byId",
+        "responses": {
+          "204": { "description": "Success" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Not found or not owned" }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ]
+      }
+    },
+    "/conversations/{id}/messages": {
+      "get": {
+        "operationId": "get_conversations_byId_messages",
+        "responses": {
+          "200": {
+            "description": "会话历史，按 createdAt、id 降序。游标定位不受新消息插入影响。",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ConversationMessageList" }
+              }
+            }
+          },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Not found or not owned" }
+        },
+        "parameters": [
+          {
+            "name": "before",
+            "in": "query",
+            "description": "读取该位置之前的消息（不包含边界），格式 createdAt|id。使用游标时 page 必须为 1。",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 100 }
+          },
+          {
+            "name": "since",
+            "in": "query",
+            "description": "刷新该位置及之后的消息（包含边界）；可与 before 配合遍历已加载范围。使用游标时 page 必须为 1。",
+            "schema": { "type": "string", "minLength": 1, "maxLength": 100 }
+          },
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 1000000, "default": 1 }
+          },
+          {
+            "name": "pageSize",
+            "in": "query",
+            "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": { "type": "string", "maxLength": 200 },
+            "description": "关键词，匹配内容、批注及附件文件名；会话列表也匹配会话标题。"
+          }
+        ]
+      },
+      "post": {
+        "operationId": "post_conversations_byId_messages",
+        "responses": {
+          "201": { "description": "Success" },
+          "401": { "description": "Unauthorized" },
+          "404": { "description": "Not found or not owned" }
+        },
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["content"],
+                "properties": {
+                  "content": { "type": "string", "minLength": 1, "maxLength": 50000 },
+                  "clientId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Optional stable ID for one send attempt. Reuse on retries; use a new ID for new or edited content."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/setup": {
+      "post": {
+        "operationId": "setup",
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Session" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "429": { "description": "Rate limited" },
+          "409": { "description": "Already initialized" }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Setup" } } }
+        }
+      }
+    },
+    "/auth/status": {
+      "get": {
+        "operationId": "getSetupStatus",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Initialization status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["initialized"],
+                  "properties": { "initialized": { "type": "boolean" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/conversations/{id}/read": {
+      "patch": {
+        "operationId": "markConversationRead",
+        "summary": "Mark all messages in a conversation read for the shared account",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "responses": {
+          "204": { "description": "Marked read" },
+          "401": { "description": "Unauthenticated" },
+          "404": { "description": "Conversation not found" }
+        }
+      }
+    },
+    "/events": {
+      "get": {
+        "operationId": "syncEvents",
+        "summary": "Authenticated SSE invalidation stream",
+        "description": "Use Authorization Bearer; never put tokens in the URL. Frames use event: sync, with JSON containing type=invalidate, scope and optional resource IDs. Reconnect and reload because events are not replayed. A heartbeat comment is emitted every 20 seconds.",
+        "responses": {
+          "200": {
+            "description": "Long-lived SSE stream",
+            "content": { "text/event-stream": { "schema": { "type": "string" } } }
+          },
+          "401": { "description": "Unauthenticated" }
+        }
+      }
+    },
+    "/conversations/{id}/images": {
+      "post": {
+        "operationId": "sendConversationImages",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "summary": "Send an image (8 MB maximum)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": { "type": "string", "maxLength": 50000 },
+                  "clientId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Optional stable ID for one send attempt. Reuse on retries; use a new ID for new or edited content."
+                  },
+                  "image": { "type": "string", "format": "binary" }
+                },
+                "required": ["image"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created message, or the existing message on retry",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Message" } }
+            }
+          },
+          "400": { "description": "Invalid fields or files" },
+          "401": { "description": "Unauthenticated" },
+          "413": { "description": "Upload too large" }
+        }
+      }
+    },
+    "/conversations/{id}/attachments": {
+      "post": {
+        "operationId": "sendConversationAttachments",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "summary": "Send 1–5 attachments (20 MB combined maximum)",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": { "type": "string", "maxLength": 50000 },
+                  "clientId": {
+                    "type": "string",
+                    "format": "uuid",
+                    "description": "Optional stable ID for one send attempt. Reuse on retries; use a new ID for new or edited content."
+                  },
+                  "files": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 5,
+                    "items": { "type": "string", "format": "binary" }
+                  },
+                  "names": {
+                    "type": "string",
+                    "description": "Optional JSON array of original filenames, in upload order."
+                  }
+                },
+                "required": ["files"]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created message, or the existing message on retry",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Message" } }
+            }
+          },
+          "400": { "description": "Invalid fields or files" },
+          "401": { "description": "Unauthenticated" },
+          "413": { "description": "Upload too large" }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": { "bearerAuth": { "type": "http", "scheme": "bearer" } },
+    "schemas": {
+      "Login": {
+        "type": "object",
+        "properties": {
+          "password": { "type": "string", "minLength": 6, "maxLength": 128 },
+          "username": { "type": "string", "minLength": 1, "maxLength": 254 }
+        },
+        "additionalProperties": false,
+        "required": ["username", "password"]
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "deviceId": { "type": "string", "nullable": true },
+          "username": { "type": "string" }
+        },
+        "additionalProperties": false,
+        "required": ["id", "username", "name", "createdAt"]
+      },
+      "CreateMessage": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "content": { "type": "string", "minLength": 1, "maxLength": 50000 },
+          "source": { "type": "string", "minLength": 1, "maxLength": 80, "default": "manual" },
+          "clientId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Optional stable ID for one send attempt. Reuse on retries; use a new ID for new or edited content."
+          }
+        },
+        "additionalProperties": false,
+        "required": ["title", "content"]
+      },
+      "UpdateMessage": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "minLength": 1, "maxLength": 200 },
+          "content": { "type": "string", "minLength": 1, "maxLength": 50000 },
+          "isRead": { "type": "boolean" },
+          "isStarred": { "type": "boolean" },
+          "annotation": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "消息批注，去除首尾空白；空字符串表示清除批注。"
+          }
+        },
+        "additionalProperties": false
+      },
+      "RegisterDevice": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+          "platform": {
+            "type": "string",
+            "enum": ["ios", "ipados", "macos", "web", "android", "windows", "linux", "other"]
+          },
+          "installationId": {
+            "type": "string",
+            "format": "uuid",
+            "description": "客户端持久保存的随机安装标识。相同账号和平台下复用已绑定的设备 ID。"
+          },
+          "fingerprint": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1024,
+            "description": "1–1024 字符指纹。identityMode=fingerprint 时同账号相同指纹复用设备 ID；旧模式需同时提交 installationId。仅保存 SHA-256 摘要，不能用于认证。"
+          },
+          "identityMode": {
+            "type": "string",
+            "enum": ["fingerprint"],
+            "description": "Web 指纹匹配模式；必须同时提交 fingerprint，仅限 platform=web。不依赖 installationId。"
+          }
+        },
+        "additionalProperties": false,
+        "required": ["name", "platform"]
+      },
+      "Device": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string" },
+          "platform": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "lastSeenAt": { "type": "string" },
+          "online": { "type": "boolean", "description": "最近 90 秒内有请求或心跳时为 true。" },
+          "fingerprintBound": {
+            "type": "boolean",
+            "description": "是否已绑定浏览器指纹或旧安装标识与环境指纹"
+          },
+          "identityMode": {
+            "type": "string",
+            "enum": ["fingerprint", "installation", "legacy"],
+            "description": "设备当前使用的识别方式"
+          }
+        },
+        "additionalProperties": false,
+        "required": ["id", "name", "platform", "createdAt", "lastSeenAt"]
+      },
+      "Session": {
+        "type": "object",
+        "properties": {
+          "accessToken": { "type": "string" },
+          "tokenType": { "type": "string", "enum": ["Bearer"] },
+          "expiresIn": { "type": "integer" },
+          "user": { "$ref": "#/components/schemas/User" }
+        },
+        "additionalProperties": false,
+        "required": ["accessToken", "tokenType", "expiresIn", "user"]
+      },
+      "Message": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "content": { "type": "string" },
+          "source": { "type": "string" },
+          "isRead": { "type": "boolean" },
+          "isStarred": { "type": "boolean" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" },
+          "senderDevice": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": { "type": "string", "nullable": true },
+              "name": { "type": "string" },
+              "platform": { "type": "string" }
+            }
+          },
+          "conversationId": { "type": "string", "format": "uuid" },
+          "annotation": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "消息批注，去除首尾空白；空字符串表示清除批注。",
+            "default": ""
+          },
+          "conversationTitle": {
+            "type": "string",
+            "description": "消息所属会话的当前名称，用于收藏来源展示。"
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "content",
+          "source",
+          "isRead",
+          "isStarred",
+          "createdAt",
+          "updatedAt",
+          "senderDevice",
+          "annotation"
+        ]
+      },
+      "MessageSummary": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "source": { "type": "string" },
+          "isRead": { "type": "boolean" },
+          "isStarred": { "type": "boolean" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" },
+          "senderDevice": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": { "type": "string", "nullable": true },
+              "name": { "type": "string" },
+              "platform": { "type": "string" }
+            }
+          },
+          "preview": { "type": "string" },
+          "annotation": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "消息批注，去除首尾空白；空字符串表示清除批注。",
+            "default": ""
+          }
+        },
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "title",
+          "source",
+          "isRead",
+          "isStarred",
+          "createdAt",
+          "updatedAt",
+          "senderDevice",
+          "preview",
+          "annotation"
+        ]
+      },
+      "MessageList": {
+        "type": "object",
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/MessageSummary" } },
+          "total": { "type": "integer" },
+          "page": { "type": "integer" },
+          "pageSize": { "type": "integer" },
+          "totalPages": { "type": "integer" },
+          "hasMore": { "type": "boolean", "description": "当前请求范围内是否还有下一批。" },
+          "nextCursor": {
+            "type": "string",
+            "nullable": true,
+            "description": "下一批 before 值；无更多消息时为 null。"
+          }
+        },
+        "additionalProperties": false,
+        "required": ["items", "total", "page", "pageSize", "totalPages"]
+      },
+      "FileItem": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "messageId", "kind", "name", "mimeType", "size", "hasPreview", "conversationId", "conversationTitle", "createdAt"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "messageId": { "type": "string", "format": "uuid" },
+          "kind": { "type": "string", "enum": ["image", "attachment"] },
+          "name": { "type": "string" },
+          "mimeType": { "type": "string" },
+          "size": { "type": "integer", "minimum": 0 },
+          "hasPreview": { "type": "boolean" },
+          "width": { "type": "integer", "nullable": true },
+          "height": { "type": "integer", "nullable": true },
+          "conversationId": { "type": "string", "format": "uuid" },
+          "conversationTitle": { "type": "string" },
+          "createdAt": { "type": "string" }
+        }
+      },
+      "FileList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "total", "page", "pageSize", "totalPages"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/FileItem" } },
+          "total": { "type": "integer" },
+          "page": { "type": "integer" },
+          "pageSize": { "type": "integer" },
+          "totalPages": { "type": "integer" }
+        }
+      },
+      "ConversationMessageList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "total", "page", "pageSize", "totalPages", "hasMore", "nextCursor"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Message" } },
+          "total": { "type": "integer", "description": "满足搜索条件的总数，不受游标边界影响。" },
+          "page": { "type": "integer" },
+          "pageSize": { "type": "integer" },
+          "totalPages": { "type": "integer" },
+          "hasMore": { "type": "boolean", "description": "当前请求范围内是否还有下一批。" },
+          "nextCursor": { "type": "string", "nullable": true }
+        }
+      },
+      "Conversation": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "createdAt": { "type": "string" },
+          "updatedAt": { "type": "string" },
+          "preview": { "type": "string", "nullable": true },
+          "messageCount": { "type": "integer" },
+          "unreadCount": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Unread messages shared by all devices of this account."
+          },
+          "isPinned": { "type": "boolean" }
+        }
+      },
+      "Setup": {
+        "type": "object",
+        "properties": {
+          "password": { "type": "string", "minLength": 6, "maxLength": 128 },
+          "username": { "type": "string", "minLength": 1, "maxLength": 254 }
+        },
+        "additionalProperties": false,
+        "required": ["username", "password"]
+      }
+    }
+  }
+}

@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-labelledby="title description">
+  <title id="title">SyncBox</title>
+  <desc id="description">A white S-shaped ribbon with two opposing arrows on a blue field, representing sharing between your devices.</desc>
+  <defs>
+    <linearGradient id="syncbox-blue" x1="160" y1="0" x2="864" y2="1024" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2999EC"/>
+      <stop offset="1" stop-color="#126AC4"/>
+    </linearGradient>
+  </defs>
+  <path fill="url(#syncbox-blue)" d="M0 0h1024v1024H0z"/>
+  <g id="syncbox-mark" fill="#FFFFFF">
+    <path d="M676 274H424C338 274 272 338 272 422S338 570 424 570H600C626 570 646 590 646 616S626 662 600 662H344V754H600C680 754 738 694 738 616S680 478 600 478H424C390 478 364 454 364 422S390 366 424 366H676V404L774 320 676 236Z"/>
+    <path d="M352 624 250 708 352 792Z"/>
+  </g>
+</svg>

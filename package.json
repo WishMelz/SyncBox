@@ -1,0 +1,28 @@
+{
+  "name": "syncbox",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "backend",
+    "frontend/web"
+  ],
+  "engines": {
+    "node": ">=24 <25"
+  },
+  "scripts": {
+    "icons:sync": "node scripts/sync-app-icons.mjs",
+    "dev": "concurrently -k -n api,web \"npm run dev:backend\" \"npm run dev:web\"",
+    "dev:backend": "npm run dev -w @syncbox/backend",
+    "dev:web": "npm run dev -w @syncbox/web",
+    "build": "npm run build --workspaces",
+    "typecheck": "npm run typecheck --workspaces",
+    "test": "npm test -w @syncbox/backend",
+    "check": "npm run typecheck && npm test && npm run build",
+    "format": "prettier --write backend/src backend/tests frontend/web/src frontend/web/vite.config.ts",
+    "format:check": "prettier --check backend/src backend/tests frontend/web/src frontend/web/vite.config.ts"
+  },
+  "devDependencies": {
+    "concurrently": "10.0.6",
+    "prettier": "3.9.10"
+  }
+}

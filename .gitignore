@@ -1,0 +1,42 @@
+.DS_Store
+build/
+DerivedData/
+xcuserdata/
+*.xcuserstate
+
+# Local configuration
+.env
+.env.*
+!.env.example
+
+# Web and backend build outputs
+node_modules/
+dist/
+coverage/
+.venv/
+__pycache__/
+*.pyc
+
+# SQLite local state
+backend/data/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+*.tsbuildinfo
+*.log
+
+# Local release artifacts
+*.apk
+*.ipa
+*.dmg
+*.msix
+*.app.zip
+releases/*/*.ipa
+releases/*/*.dmg
+
+# Flutter SDK managers
+.fvm/
+
+# Swift Package Manager
+.build/
+.swiftpm/
