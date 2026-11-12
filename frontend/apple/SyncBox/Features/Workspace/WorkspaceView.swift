@@ -142,7 +142,7 @@ struct WorkspaceView: View {
                 .refreshable { await model.refresh() }
                 .overlay {
                     if model.conversations.items.isEmpty {
-                        ContentUnavailableView(model.loading ? "正在加载…" : model.conversationQuery.isEmpty ? "暂无会话" : "没有匹配的会话", systemImage: "bubble.left.and.bubble.right", description: Text(model.conversationQuery.isEmpty ? "新建会话，分享文字、图片或文件。" : "换个关键词试试。"))
+                        ContentUnavailableView(model.loading ? "正在加载…" : model.conversationQuery.isEmpty ? "暂无会话" : "没有匹配的会话", systemImage: "bubble.left.and.bubble.right", description: Text(model.conversationQuery.isEmpty ? "新建会话，发送文字、图片或文件。" : "换个关键词试试。"))
                             .allowsHitTesting(false)
                     }
                 }
@@ -198,8 +198,8 @@ struct WorkspaceView: View {
                     #endif
             } else {
                 ContentUnavailableView {
-                    Label("让内容自由流动", systemImage: "square.stack.3d.up")
-                } description: { Text("选择或新建会话，发送到你的所有设备。") } actions: {
+                    Label("选择一个会话", systemImage: "bubble.left.and.bubble.right")
+                } description: { Text("发送文字、图片或文件，其他设备会同步显示。") } actions: {
                     Button("新建会话") { edit(nil) }.buttonStyle(.borderedProminent)
                 }
             }
@@ -231,7 +231,7 @@ private struct ConversationTitleEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
             Text(conversation == nil ? "新建会话" : "重命名会话").font(.title2.bold())
-            Text("将相关内容放在一起，例如灵感、链接或临时传输。")
+            Text("把相关消息放在同一个会话中。")
                 .font(.callout).foregroundStyle(.secondary)
             TextField("会话名称（1–80 个字符）", text: $title).textFieldStyle(.roundedBorder)
             HStack {
@@ -257,7 +257,7 @@ struct ConversationRow: View {
                     HighlightedText(text: conversation.title, query: query).font(.headline).lineLimit(1)
                     Spacer()
                 }
-                HighlightedText(text: conversation.preview ?? "还没有消息", query: query).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
+                        HighlightedText(text: conversation.preview ?? "暂无消息", query: query).font(.subheadline).foregroundStyle(.secondary).lineLimit(2)
             }
         }.padding(.vertical, 6)
     }
@@ -314,7 +314,7 @@ struct DevicesView: View {
                         }
                     }
                 }
-                Section { Text("在线状态按最近 90 秒内的活动判断。内容每 5 秒在前台刷新。")
+                Section { Text("设备状态会在前台自动更新。")
                     .font(.caption).foregroundStyle(.secondary) }
             }.navigationTitle("我的设备")
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }

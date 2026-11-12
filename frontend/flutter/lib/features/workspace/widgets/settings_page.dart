@@ -80,7 +80,7 @@ class _SettingsPageState extends State<SettingsPage> {
         await widget.connection.expire();
         return;
       }
-      error = e.toString();
+      error = e is ApiException ? e.message : '操作失败，请重试';
     } finally {
       if (mounted) {
         setState(() => busy = false);

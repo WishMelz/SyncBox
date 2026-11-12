@@ -112,7 +112,7 @@ export class MessagesService {
         conversationId,
         userId,
       ]);
-      if (!owned[0]) throw new NotFoundException('Conversation not found');
+      if (!owned[0]) throw new NotFoundException('会话不存在');
       await manager.query('UPDATE conversations SET updated_at=? WHERE id=?', [
         now,
         conversationId,
@@ -188,14 +188,14 @@ export class MessagesService {
         !Number.isFinite(Date.parse(match[1]!)) ||
         new Date(match[1]!).toISOString() !== match[1]
       ) {
-        throw new BadRequestException('Invalid message cursor');
+        throw new BadRequestException('消息游标无效，请刷新后重试');
       }
       return [match[1]!, match[2]!.toLowerCase()] as const;
     };
     const before = cursor(query.before),
       since = cursor(query.since);
     if ((before || since) && query.page !== 1)
-      throw new BadRequestException('Cursor queries require page=1');
+      throw new BadRequestException('加载历史消息时页码必须为 1');
     const clauses = ['user_id = ?'];
     const args: unknown[] = [userId];
     if (conversationId) {
@@ -294,7 +294,9 @@ export class MessagesService {
     }
     if (query.q) {
       const term = `%${query.q.replace(/[\\%_]/g, '\\$&')}%`;
-      clauses.push("(name LIKE ? ESCAPE '\\' OR conversation_title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')");
+      clauses.push(
+        "(name LIKE ? ESCAPE '\\' OR conversation_title LIKE ? ESCAPE '\\' OR content LIKE ? ESCAPE '\\')",
+      );
       args.push(term, term, term);
     }
     const where = clauses.join(' AND ');
@@ -336,7 +338,7 @@ export class MessagesService {
       `SELECT messages.*, (SELECT c.title FROM conversations c WHERE c.id=messages.conversation_id AND c.user_id=messages.user_id) AS conversation_title, ${attachmentMetadataSQL} AS attachments_json, i.mime_type, i.width, i.height, i.size FROM messages LEFT JOIN message_images i ON i.message_id=messages.id WHERE messages.id = ? AND user_id = ?`,
       [id, userId],
     );
-    if (!rows[0]) throw new NotFoundException('Message not found');
+    if (!rows[0]) throw new NotFoundException('消息不存在');
     return serialize(rows[0]);
   }
   async createAttachments(
@@ -455,7 +457,7 @@ export class MessagesService {
       fields.push('is_starred = ?');
       args.push(dto.isStarred ? 1 : 0);
     }
-    if (!fields.length) throw new BadRequestException('At least one field must be provided');
+    if (!fields.length) throw new BadRequestException('请至少填写一项内容');
     await this.detail(userId, id);
     await this.db.query(
       `UPDATE messages SET ${fields.join(', ')}, updated_at = ? WHERE id = ? AND user_id = ?`,

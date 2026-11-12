@@ -52,7 +52,7 @@ export function LoginPage({ onLogin }: { onLogin: (s: Session) => Promise<void> 
       if (e instanceof ApiError && e.status === 409) {
         setRegister(false);
       }
-      setError(e instanceof Error ? e.message : '连接失败');
+      setError(e instanceof ApiError ? e.message : '无法完成登录，请检查网络后重试。');
     } finally {
       setBusy(false);
     }
@@ -101,7 +101,7 @@ export function LoginPage({ onLogin }: { onLogin: (s: Session) => Promise<void> 
                 : '正在检查服务状态，请稍候。'
               : register
                 ? '首次使用，请设置用户名和密码。其他设备使用同一账号登录。'
-                : '登录后，继续查看和分享你的内容。'}
+                : '登录后，查看并发送你的内容。'}
           </p>
           <form onSubmit={submit} className="space-y-5">
             <label className="field-label">

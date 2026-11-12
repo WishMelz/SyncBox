@@ -115,7 +115,7 @@ final class ConnectionModel {
     func resetLocalSession() {
         workspace?.stopEvents()
         api?.token = nil; workspace = nil; deviceId = nil; username = ""; initialized = false; requiresTwoFactor = false; error = nil; stage = .credentials
-        do { try persist() } catch { self.error = error.localizedDescription }
+        do { try persist() } catch { self.error = userFacingError(error, fallback: "无法保存登录状态，请重试") }
     }
     func expire() {
         workspace?.stopEvents()
@@ -125,7 +125,7 @@ final class ConnectionModel {
         stage = .credentials
         initialized = true
         do { try persist(); error = "登录已失效，请重新登录" }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = userFacingError(error) }
     }
 
     func editServer() {
@@ -193,6 +193,6 @@ final class ConnectionModel {
         error = nil
         defer { busy = false }
         do { try await work() }
-        catch { self.error = error.localizedDescription }
+        catch { self.error = userFacingError(error) }
     }
 }

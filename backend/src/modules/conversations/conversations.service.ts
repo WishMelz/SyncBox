@@ -30,15 +30,17 @@ export class ConversationsService {
       'SELECT id,title,is_pinned AS isPinned,created_at AS createdAt,updated_at AS updatedAt FROM conversations WHERE id = ? AND user_id = ?',
       [id, userId],
     );
-    if (!rows[0]) throw new NotFoundException('Conversation not found');
+    if (!rows[0]) throw new NotFoundException('会话不存在');
     return { ...rows[0], isPinned: !!rows[0].isPinned };
   }
   async list(userId: string, q: string, page: number, pageSize: number) {
     const term = '%' + q.replace(/[\\%_]/g, '\\$&') + '%';
     const where = canUseFts(q)
-      ? 'c.user_id = ? AND (c.title LIKE ? ESCAPE \'\\\' OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.id IN (SELECT message_id FROM message_search WHERE message_search MATCH ?)))'
+      ? "c.user_id = ? AND (c.title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND m.id IN (SELECT message_id FROM message_search WHERE message_search MATCH ?)))"
       : "c.user_id = ? AND (c.title LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM messages m WHERE m.conversation_id = c.id AND (m.annotation LIKE ? ESCAPE '\\' OR m.content LIKE ? ESCAPE '\\' OR EXISTS (SELECT 1 FROM message_attachments a WHERE a.message_id=m.id AND a.name LIKE ? ESCAPE '\\'))))";
-    const searchArgs = canUseFts(q) ? [userId, term, ftsQuery(q)] : [userId, term, term, term, term];
+    const searchArgs = canUseFts(q)
+      ? [userId, term, ftsQuery(q)]
+      : [userId, term, term, term, term];
     return this.db.transaction(async (manager) => {
       const [count] = await manager.query(
         `SELECT COUNT(*) AS total FROM conversations c WHERE ${where}`,
@@ -59,7 +61,10 @@ export class ConversationsService {
   }
   async markRead(userId: string, id: string) {
     await this.detail(userId, id);
-    await this.db.query('UPDATE messages SET is_read=1 WHERE user_id=? AND conversation_id=? AND is_read=0', [userId, id]);
+    await this.db.query(
+      'UPDATE messages SET is_read=1 WHERE user_id=? AND conversation_id=? AND is_read=0',
+      [userId, id],
+    );
   }
   async update(userId: string, id: string, dto: { title?: string; pinned?: boolean }) {
     await this.detail(userId, id);

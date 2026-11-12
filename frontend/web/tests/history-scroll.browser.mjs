@@ -177,7 +177,7 @@ try {
       el.scrollTop = 0;
     });
     await page.waitForTimeout(700);
-    assert.equal(await page.getByText('已到最早消息', { exact: true }).count(), 1);
+    assert.equal(await page.getByText('已到最早消息', { exact: true }).count(), 0);
     await page.getByRole('button', { name: '回到底部', exact: true }).click();
     await page.locator(`[data-message-id="${records.at(-1).id}"]`).waitFor();
     records.push({

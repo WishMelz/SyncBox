@@ -367,7 +367,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       child: controller.favoritesMode
           ? FavoritesView(controller: controller, compact: !wide)
           : controller.selected == null
-          ? const Center(child: Text('选择或创建一个会话，开始跨设备共享'))
+          ? const Center(child: Text('选择或创建会话，开始发送内容'))
           : ConversationDetail(
               key: ValueKey(controller.selected!.id),
               controller: controller,

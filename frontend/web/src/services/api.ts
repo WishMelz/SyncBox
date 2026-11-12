@@ -32,7 +32,7 @@ export async function apiRequest<T>(
       response.status,
       Array.isArray(data?.message)
         ? data.message.join('; ')
-        : (data?.message ?? `HTTP ${response.status}`),
+        : (data?.message ?? '请求失败，请重试。'),
       data?.code,
     );
   }

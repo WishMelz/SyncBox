@@ -65,6 +65,12 @@ struct APIError: LocalizedError {
     var errorDescription: String? { message }
 }
 
+func userFacingError(_ error: Error, fallback: String = "操作失败，请重试") -> String {
+    if let apiError = error as? APIError { return apiError.message }
+    if error is URLError { return "网络连接失败，请重试" }
+    return fallback
+}
+
 struct SyncEvent: Decodable {
     let type: String
     let scope: String

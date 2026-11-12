@@ -14,6 +14,7 @@ interface HistoryContext {
 }
 function HistoryHeader({ context }: { context?: HistoryContext }) {
   if (!context) return null;
+  if (!context.loadingOlder && !context.olderError && !context.hasOlder) return null;
   return (
     <div className="history-loader" role="status">
       {context.loadingOlder ? (
@@ -22,9 +23,7 @@ function HistoryHeader({ context }: { context?: HistoryContext }) {
         <button onClick={context.onLoadOlder}>加载失败，点击重试</button>
       ) : context.hasOlder ? (
         '向上滚动查看更早消息'
-      ) : (
-        '已到最早消息'
-      )}
+      ) : null}
     </div>
   );
 }

@@ -150,7 +150,7 @@ struct SettingsView: View {
                     if !embedded { dismiss() }
                     connection.expire()
                 }
-                else { self.error = error.localizedDescription }
+                else { self.error = userFacingError(error) }
             }
         }
     }

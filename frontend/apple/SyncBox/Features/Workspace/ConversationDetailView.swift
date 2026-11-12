@@ -40,7 +40,7 @@ struct ConversationDetailView: View {
             }
             HistoryMessageList(model: model) {
                         if model.messages.items.isEmpty {
-                            ContentUnavailableView(model.messageQuery.isEmpty ? "从一条消息开始" : "没有找到相关内容", systemImage: "text.bubble", description: Text(model.messageQuery.isEmpty ? "发送文字或链接，其他设备即可查看。" : "试试其他关键词。"))
+                            ContentUnavailableView(model.messageQuery.isEmpty ? "从一条消息开始" : "没有找到相关内容", systemImage: "text.bubble", description: Text(model.messageQuery.isEmpty ? "发送文字、图片或文件，其他设备会同步显示。" : "试试其他关键词。"))
                                 .frame(maxWidth: .infinity)
                         }
                         ForEach(Array(orderedMessages.enumerated()), id: \.element.id) { index, message in
@@ -153,7 +153,7 @@ struct ConversationDetailView: View {
                     files.append(PendingFile(name: url.lastPathComponent, data: data))
                 }
                 model.fileDrafts[conversation.id] = files
-            } catch { model.error = error.localizedDescription }
+            } catch { model.error = userFacingError(error) }
         }
         .fileImporter(isPresented: $choosingImage, allowedContentTypes: [.image]) { result in
             do {
@@ -163,14 +163,14 @@ struct ConversationDetailView: View {
                 let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
                 guard size <= 8 * 1024 * 1024 else { throw APIError(message: "图片不能超过 8 MB") }
                 model.imageDrafts[conversation.id] = try prepareImage(Data(contentsOf: url))
-            } catch { model.error = error.localizedDescription }
+            } catch { model.error = userFacingError(error) }
         }
         #if os(iOS)
         .onChange(of: photo) { _, item in
             let id = conversation.id
             Task {
                 do { if let data = try await item?.loadTransferable(type: Data.self) { model.imageDrafts[id] = try prepareImage(data) } }
-                catch { model.error = error.localizedDescription }
+                catch { model.error = userFacingError(error) }
                 photo = nil
             }
         }
@@ -246,17 +246,19 @@ private struct HistoryMessageList<Content: View>: View {
             ScrollViewReader { proxy in
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 16) {
-                        HStack {
-                            Spacer()
-                            if history.loadingOlder { Text("正在加载更早消息…") }
-                            else if history.olderError != nil {
-                                Button("加载失败，点击重试") { Task { await model.loadOlderMessages() } }
-                            } else { Text(history.hasOlder ? "向上滚动查看更早消息" : "已到最早消息") }
-                            Spacer()
-                        }.font(.caption).foregroundStyle(.secondary).frame(height: 28)
-                            .background(GeometryReader { geometry in
-                                Color.clear.preference(key: HistoryEdges.self, value: ["top": geometry.frame(in: .named("history")).minY])
-                            })
+                        if history.loadingOlder || history.olderError != nil || history.hasOlder {
+                            HStack {
+                                Spacer()
+                                if history.loadingOlder { Text("正在加载更早消息…") }
+                                else if history.olderError != nil {
+                                    Button("加载失败，点击重试") { Task { await model.loadOlderMessages() } }
+                                } else { Text("向上滚动查看更早消息") }
+                                Spacer()
+                            }.font(.caption).foregroundStyle(.secondary).frame(height: 28)
+                                .background(GeometryReader { geometry in
+                                    Color.clear.preference(key: HistoryEdges.self, value: ["top": geometry.frame(in: .named("history")).minY])
+                                })
+                        }
                         content()
                         Color.clear.frame(height: 1).id("bottom")
                             .background(GeometryReader { geometry in
@@ -458,7 +460,7 @@ struct AnnotationEditor: View {
         error = nil
         Task {
             do { try await model.saveAnnotation(message, text: value); dismiss() }
-            catch { self.error = error.localizedDescription }
+            catch { self.error = userFacingError(error) }
             saving = false
         }
     }

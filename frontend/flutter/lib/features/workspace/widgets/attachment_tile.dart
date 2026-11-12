@@ -58,8 +58,9 @@ class _AttachmentTileState extends State<AttachmentTile> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('保存失败：$e')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('文件保存失败，请重试。')),
+        );
       }
     } finally {
       if (mounted) setState(() => saving = false);

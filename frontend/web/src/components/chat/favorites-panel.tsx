@@ -96,7 +96,7 @@ export function FavoritesPanel({
   }
   function fail(e: unknown) {
     if (e instanceof ApiError && e.status === 401) onExpired();
-    else setError(e instanceof Error ? e.message : '操作失败，请重试。');
+    else setError(e instanceof ApiError ? e.message : '操作失败，请重试。');
   }
   return (
     <div className="favorites-backdrop" onClick={onClose}>
@@ -158,7 +158,7 @@ export function FavoritesPanel({
             </div>
           )}
           {loading ? (
-            <p className="favorites-empty">正在加载…</p>
+            <p className="favorites-empty">正在加载收藏…</p>
           ) : !data.items.length ? (
             <div className="favorites-empty">
               <Star size={26} />

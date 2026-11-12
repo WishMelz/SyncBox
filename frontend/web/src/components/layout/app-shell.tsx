@@ -40,7 +40,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           ))}
         </nav>
         <div className="mt-auto rounded-xl bg-muted p-4 text-xs leading-6 text-muted-foreground">
-          SyncBox · 初始工作空间
+          SyncBox · 个人共享空间
           <br />
           跨设备，一处开始。
         </div>

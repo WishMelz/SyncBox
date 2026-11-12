@@ -43,7 +43,7 @@ export function AnnotationDialog({
       onClose();
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) onExpired();
-      else setError(e instanceof Error ? e.message : '保存失败，请重试');
+      else setError(e instanceof ApiError ? e.message : '保存失败，请重试');
     } finally {
       lock.current = false;
       setBusy(false);

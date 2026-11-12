@@ -37,14 +37,14 @@ struct AttachmentView: View {
                     Task {
                         defer { downloading = false }
                         do { document = AttachmentDocument(data: try await model.attachmentData(message, file: file)); exporting = true }
-                        catch { model.error = error.localizedDescription }
+                        catch { model.error = userFacingError(error) }
                     }
                 } label: { Label(downloading ? "保存中…" : "保存文件", systemImage: "arrow.down.to.line") }.labelStyle(.iconOnly).disabled(file.deletedAt != nil || downloading)
             }.padding(10).background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
         }
         .task(id: file.id) { if file.hasPreview == true && file.deletedAt == nil { await loadPreview() } }
         .fileExporter(isPresented: $exporting, document: document, contentType: .data, defaultFilename: file.name) { result in
-            if case .failure(let error) = result { model.error = error.localizedDescription }
+            if case .failure(let error) = result { model.error = userFacingError(error) }
             document = nil
         }
     }

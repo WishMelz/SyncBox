@@ -351,6 +351,6 @@ final class WorkspaceModel {
     private func handle(_ error: Error, message: String? = nil) {
         if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
         if (error as? APIError)?.status == 401 { onUnauthorized() }
-        else { self.error = message ?? error.localizedDescription }
+        else { self.error = message ?? userFacingError(error) }
     }
 }

@@ -38,7 +38,7 @@ export class SettingsService implements OnModuleInit, OnModuleDestroy {
       const [user] = await m.query('SELECT totp_secret,recovery_hashes FROM users WHERE id=?', [
         userId,
       ]);
-      if (!user) throw new UnauthorizedException();
+      if (!user) throw new UnauthorizedException('请先登录');
       const [s] = await m.query('SELECT * FROM user_settings WHERE user_id=?', [userId]);
       const [files] = await m.query(
         `SELECT COUNT(*) count,COALESCE(SUM(size),0) bytes FROM (

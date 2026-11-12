@@ -55,7 +55,7 @@ export class DevicesService {
           dto.id,
           userId,
         ]);
-        if (!existing) throw new NotFoundException('Device not found');
+        if (!existing) throw new NotFoundException('设备不存在');
         if (
           existing.platform !== dto.platform ||
           (existing.browser_fingerprint_hash &&
@@ -134,7 +134,7 @@ export class DevicesService {
       `UPDATE devices SET name=?,last_seen_at=? WHERE id=? AND user_id=? RETURNING ${columns}`,
       [name, new Date().toISOString(), id, userId],
     );
-    if (!rows[0]) throw new NotFoundException('Device not found');
+    if (!rows[0]) throw new NotFoundException('设备不存在');
     return serialize(rows[0]);
   }
   async remove(userId: string, id: string) {
@@ -143,7 +143,7 @@ export class DevicesService {
         id,
         userId,
       ]);
-      if (!rows[0]) throw new NotFoundException('Device not found');
+      if (!rows[0]) throw new NotFoundException('设备不存在');
       await manager.query('DELETE FROM sessions WHERE device_id = ? AND user_id = ?', [id, userId]);
       await manager.query('DELETE FROM devices WHERE id = ? AND user_id = ?', [id, userId]);
     });

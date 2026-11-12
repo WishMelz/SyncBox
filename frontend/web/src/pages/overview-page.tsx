@@ -44,7 +44,7 @@ export function OverviewPage() {
         </p>
         <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">欢迎来到 SyncBox</h1>
         <p className="mt-3 max-w-xl text-sm leading-7 text-muted-foreground">
-          你的多端工作空间已就绪。从这里查看服务状态，开始构建属于你的同步体验。
+          文字、图片和文件会保存在你的服务中，并同步到已登录的设备。
         </p>
       </section>
       <section className="relative overflow-hidden rounded-2xl bg-[#1c2340] p-6 text-white sm:p-9">
@@ -53,10 +53,10 @@ export function OverviewPage() {
           className="absolute -right-10 -top-24 size-72 rounded-full border-[36px] border-white/5"
         />
         <div className="relative max-w-lg">
-          <Badge className="mb-5 border-white/20 bg-white/10 text-white">初始工作空间</Badge>
+          <Badge className="mb-5 border-white/20 bg-white/10 text-white">个人共享空间</Badge>
           <h2 className="text-2xl font-medium tracking-tight">连接每一端，从这里开始。</h2>
           <p className="mt-3 text-sm leading-7 text-slate-300">
-            基础框架已搭建。文件管理与同步功能将在后续业务开发中接入。
+            连接同一账号的设备，即可查看会话、消息和附件。
           </p>
           <Button asChild variant="secondary" className="mt-6">
             <a href="#services">

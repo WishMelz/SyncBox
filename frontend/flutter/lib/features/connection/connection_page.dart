@@ -93,7 +93,7 @@ class _ConnectionPageState extends State<ConnectionPage> {
                     const SizedBox(height: 10),
                     Text(
                       isServer
-                          ? '所有设备连接同一个服务，即可共享会话和内容。'
+                          ? '所有设备连接同一服务，即可查看同一账号的会话和内容。'
                           : c.initialized
                           ? '使用首次设置的唯一账号登录。'
                           : '仅设置一次。所有设备使用这组用户名和密码。',

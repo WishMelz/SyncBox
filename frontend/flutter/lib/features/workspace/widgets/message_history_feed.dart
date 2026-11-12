@@ -156,24 +156,24 @@ class _MessageHistoryFeedState extends State<MessageHistoryFeed> {
                 ),
               ),
             ),
-            SliverToBoxAdapter(
-              child: SizedBox(
-                height: 40,
-                child: Center(
-                  child: _memory.loadingOlder
-                      ? const Text('正在加载更早消息…')
-                      : _memory.olderError != null
-                      ? TextButton(
-                          onPressed: widget.controller.loadOlderMessages,
-                          child: const Text('加载失败，点击重试'),
-                        )
-                      : Text(
-                          _memory.hasOlder ? '向上滚动查看更早消息' : '已到最早消息',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
+            if (_memory.loadingOlder ||
+                _memory.olderError != null ||
+                _memory.hasOlder)
+              SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 40,
+                  child: Center(
+                    child: _memory.loadingOlder
+                        ? const Text('正在加载更早消息…')
+                        : _memory.olderError != null
+                        ? TextButton(
+                            onPressed: widget.controller.loadOlderMessages,
+                            child: const Text('加载失败，点击重试'),
+                          )
+                        : const Text('向上滚动查看更早消息'),
+                  ),
                 ),
               ),
-            ),
           ],
         ),
         if (!_memory.atBottom)

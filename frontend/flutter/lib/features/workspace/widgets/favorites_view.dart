@@ -75,7 +75,7 @@ class FavoritesView extends StatelessWidget {
             ? Center(
                 child: Text(
                   controller.refreshing
-                      ? '正在读取…'
+                      ? '正在加载收藏…'
                       : controller.messageSearch.isEmpty
                       ? '收藏重要内容，方便下次查找'
                       : '没有匹配的收藏',

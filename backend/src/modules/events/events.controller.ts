@@ -15,7 +15,7 @@ export class EventsController {
     const header = request.header('authorization');
     const token = /^Bearer ([a-f0-9]{64})$/i.exec(header ?? '')?.[1];
     if (!token || !/^[a-f0-9]{64}$/i.test(token)) {
-      response.status(401).json({ message: 'Bearer token required' });
+      response.status(401).json({ message: '请先登录' });
       return;
     }
     let user;

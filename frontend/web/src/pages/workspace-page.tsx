@@ -177,7 +177,7 @@ export function WorkspacePage({
         onExpired();
         return;
       }
-      setError(e instanceof Error ? e.message : '操作失败，请重试');
+      setError(e instanceof ApiError ? e.message : '操作失败，请重试');
     },
     [onExpired],
   );
@@ -789,7 +789,7 @@ export function WorkspacePage({
                         </time>
                       </span>
                       <span className="preview">
-                        {c.preview ? <HighlightText text={c.preview} query={query} /> : '尚无消息'}
+                        {c.preview ? <HighlightText text={c.preview} query={query} /> : '暂无消息'}
                       </span>
                     </span>
                   </button>

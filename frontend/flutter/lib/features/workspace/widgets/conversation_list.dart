@@ -107,7 +107,7 @@ class ConversationList extends StatelessWidget {
               ? Center(
                   child: Text(
                     controller.conversationSearch.isEmpty
-                        ? '暂无会话，点击 + 开始'
+                        ? '暂无会话，点击 + 新建'
                         : '没有匹配的会话',
                   ),
                 )
@@ -151,7 +151,7 @@ class ConversationList extends StatelessWidget {
                           overflow: TextOverflow.ellipsis,
                         ),
                         subtitle: HighlightText(
-                          c.preview.isEmpty ? '发送第一条消息' : c.preview,
+                          c.preview.isEmpty ? '暂无消息' : c.preview,
                           query: controller.conversationSearch,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,

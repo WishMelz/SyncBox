@@ -94,7 +94,7 @@ export function SettingsPanel({
       setNotice('文件清理设置已保存。');
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) onExpired();
-      else setError(e instanceof Error ? e.message : '保存失败，请重试。');
+      else setError(e instanceof ApiError ? e.message : '保存失败，请重试。');
     } finally {
       setBusy(false);
     }
@@ -117,7 +117,7 @@ export function SettingsPanel({
       );
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) onExpired();
-      else setError(e instanceof Error ? e.message : '备份下载失败，请重试。');
+      else setError(e instanceof ApiError ? e.message : '备份下载失败，请重试。');
     } finally {
       setBusy(false);
     }
@@ -157,7 +157,7 @@ export function SettingsPanel({
         );
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : '操作失败，请重试。');
+      setError(e instanceof ApiError ? e.message : '操作失败，请重试。');
     } finally {
       setBusy(false);
     }

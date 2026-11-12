@@ -64,6 +64,6 @@ final class MessageHistory {
                 page = Page(items: items, page: 1, totalPages: result.totalPages, total: result.total)
                 hasOlder = result.hasMore ?? (result.total > items.count)
             }
-        } catch { olderError = error.localizedDescription; throw error }
+        } catch { olderError = "加载历史消息失败"; throw error }
     }
 }

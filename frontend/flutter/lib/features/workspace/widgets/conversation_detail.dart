@@ -102,17 +102,23 @@ class _ConversationDetailState extends State<ConversationDetail> {
       var size = 0;
       for (final file in files) {
         final length = await file.length();
-        if (length == 0) throw Exception('不能发送空文件');
+        if (length == 0) throw const FormatException('不能发送空文件');
         size += length;
       }
       if (files.length > 5 || size > 20 * 1024 * 1024) {
-        throw Exception('最多 5 个附件，合计不超过 20 MB');
+        throw const FormatException('最多 5 个附件，合计不超过 20 MB');
       }
       if (mounted) c.attachFiles(id, files);
-    } catch (e) {
+    } on FormatException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('选择附件失败：$e')));
+            .showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法添加附件，请重试。')),
+        );
       }
     }
   }
@@ -131,13 +137,21 @@ class _ConversationDetailState extends State<ConversationDetail> {
         ],
       );
       if (file == null || !mounted) return;
-      if (await file.length() > 8 * 1024 * 1024) throw Exception('图片不能超过 8 MB');
+      if (await file.length() > 8 * 1024 * 1024) {
+        throw const FormatException('图片不能超过 8 MB');
+      }
       final bytes = await file.readAsBytes();
       if (mounted) c.attachImage(id, bytes);
-    } catch (e) {
+    } on FormatException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('选择图片失败：$e')));
+            .showSnackBar(SnackBar(content: Text(e.message)));
+      }
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法添加图片，请重试。')),
+        );
       }
     }
   }
@@ -331,7 +345,7 @@ class _ConversationDetailState extends State<ConversationDetail> {
                   ? Center(
                       child: Text(
                         c.refreshing
-                            ? '正在读取…'
+                            ? '正在加载消息…'
                             : c.messageSearch.isEmpty
                             ? '发送内容，在其他设备继续'
                             : '没有匹配的消息',

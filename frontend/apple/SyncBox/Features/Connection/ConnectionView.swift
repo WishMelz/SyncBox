@@ -27,7 +27,7 @@ struct ConnectionView: View {
                     Text(isServer ? "连接私人服务" : model.initialized ? "欢迎回来" : "设置唯一账号")
                         .font(.title2.bold())
                     if isServer {
-                        Text("填写你部署的 SyncBox 地址。所有设备连接同一服务，即可共享会话和消息。")
+                        Text("填写你部署的 SyncBox 地址。所有设备连接同一服务，即可查看同一账号的会话和内容。")
                             .foregroundStyle(.secondary)
                         field("服务地址") {
                             TextField("https://sync.example.com", text: $model.serverText)

@@ -81,7 +81,7 @@ export function CurrentDeviceSettings({
       setNotice('设备名称已保存');
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) onExpired();
-      else setError(e instanceof Error ? e.message : '保存失败，请重试。');
+      else setError(e instanceof ApiError ? e.message : '保存失败，请重试。');
     } finally {
       saveLock.current = false;
       setSaving(false);
@@ -105,7 +105,7 @@ export function CurrentDeviceSettings({
       </h3>
       <p>为这台设备起个名字，方便识别消息来源。</p>
       {loading ? (
-        <p role="status">正在读取设备名称…</p>
+        <p role="status">正在加载设备名称…</p>
       ) : (
         device && (
           <>

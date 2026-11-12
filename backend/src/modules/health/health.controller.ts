@@ -10,7 +10,7 @@ export class HealthController {
     try {
       await this.database.query('SELECT 1');
     } catch {
-      throw new ServiceUnavailableException('Database unavailable');
+      throw new ServiceUnavailableException('数据库暂时不可用');
     }
     return { status: 'ok', service: 'syncbox-backend', database: 'up' };
   }

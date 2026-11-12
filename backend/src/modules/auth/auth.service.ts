@@ -149,13 +149,12 @@ export class AuthService {
   }
 
   async authenticate(token: string): Promise<CurrentUser> {
-    if (!/^[a-f0-9]{64}$/.test(token))
-      throw new UnauthorizedException('Invalid or expired session');
+    if (!/^[a-f0-9]{64}$/.test(token)) throw new UnauthorizedException('登录已失效，请重新登录');
     const rows: (UserRow & { device_id: string | null })[] = await this.db.query(
       `SELECT u.*, s.device_id FROM users u JOIN sessions s ON s.user_id = u.id WHERE s.token_hash = ? AND s.expires_at > ?`,
       [digest(token), Date.now()],
     );
-    if (!rows[0]) throw new UnauthorizedException('Invalid or expired session');
+    if (!rows[0]) throw new UnauthorizedException('登录已失效，请重新登录');
     if (rows[0].device_id)
       await this.db.query('UPDATE devices SET last_seen_at = ? WHERE id = ? AND user_id = ?', [
         new Date().toISOString(),
