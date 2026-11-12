@@ -14,6 +14,7 @@ struct ConversationDetailView: View {
     let conversation: Conversation
     let rename: () -> Void
     let delete: () -> Void
+    var compact = false
     @State private var annotatingMessage: Message?
     @State private var deletingMessage: Message?
     @State private var copiedID: String?
@@ -38,7 +39,7 @@ struct ConversationDetailView: View {
             }.padding()
             Divider()
             }
-            HistoryMessageList(model: model) {
+            HistoryMessageList(model: model, padding: compact ? 10 : 20) {
                         if model.messages.items.isEmpty {
                             ContentUnavailableView(model.messageQuery.isEmpty ? "从一条消息开始" : "没有找到相关内容", systemImage: "text.bubble", description: Text(model.messageQuery.isEmpty ? "发送文字、图片或文件，其他设备会同步显示。" : "试试其他关键词。"))
                                 .frame(maxWidth: .infinity)
@@ -111,6 +112,7 @@ struct ConversationDetailView: View {
                 TextField("输入消息…", text: $model.draft, axis: .vertical)
                     .lineLimit(1...6).textFieldStyle(.plain)
                     #if os(macOS)
+                    .onPasteCommand(of: [.image]) { pasteImages($0) }
                     .onKeyPress(.return, phases: .down) { press in
                         let editor = NSApp.keyWindow?.firstResponder as? NSTextView
                         // Candidate confirmation belongs to the input method, not message sending.
@@ -178,7 +180,7 @@ struct ConversationDetailView: View {
         .sheet(item: $annotatingMessage) { message in
             AnnotationEditor(message: message, model: model)
         }
-        .navigationTitle(conversation.title)
+        .navigationTitle(compact ? "" : conversation.title)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #else
@@ -187,6 +189,7 @@ struct ConversationDetailView: View {
         }
         #endif
         .toolbar {
+          if !compact {
             ToolbarItem(placement: .primaryAction) {
                 Button {
                     searchOpen.toggle()
@@ -205,6 +208,7 @@ struct ConversationDetailView: View {
                 .menuIndicator(.hidden)
                 #endif
             }
+          }
         }
         .task(id: model.messageQuery) {
             do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
@@ -227,6 +231,35 @@ struct ConversationDetailView: View {
         "最多 5 个附件 · 合计 20 MB"
         #endif
     }
+
+    #if os(macOS)
+    private func pasteImages(_ providers: [NSItemProvider]) {
+        guard !model.sending else { return }
+        let id = conversation.id
+        guard providers.count == 1, let provider = providers.first,
+              let type = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .image) == true }) else {
+            model.error = "请一次粘贴一张图片"
+            return
+        }
+        guard model.imageDrafts[id] == nil, (model.fileDrafts[id] ?? []).isEmpty else {
+            model.error = "请先发送或移除待发送的附件"
+            return
+        }
+        Task { @MainActor in
+            do {
+                let data: Data = try await withCheckedThrowingContinuation { continuation in
+                    _ = provider.loadDataRepresentation(forTypeIdentifier: type) { data, error in
+                        if let data { continuation.resume(returning: data) }
+                        else { continuation.resume(throwing: error ?? APIError(message: "无法读取剪贴板图片")) }
+                    }
+                }
+                guard !model.sending, model.selected?.id == id,
+                      model.imageDrafts[id] == nil, (model.fileDrafts[id] ?? []).isEmpty else { return }
+                model.imageDrafts[id] = try prepareImage(data)
+            } catch { model.error = userFacingError(error, fallback: "无法粘贴图片，请重试") }
+        }
+    }
+    #endif
 }
 
 private struct HistoryEdges: PreferenceKey {
@@ -238,6 +271,7 @@ private struct HistoryEdges: PreferenceKey {
 
 private struct HistoryMessageList<Content: View>: View {
     let model: WorkspaceModel
+    var padding: CGFloat = 20
     @ViewBuilder let content: () -> Content
     @State private var initialized = false
     private var history: MessageHistory { model.messageHistory }
@@ -264,7 +298,7 @@ private struct HistoryMessageList<Content: View>: View {
                             .background(GeometryReader { geometry in
                                 Color.clear.preference(key: HistoryEdges.self, value: ["bottom": geometry.frame(in: .named("history")).maxY])
                             })
-                    }.scrollTargetLayout().padding(20).frame(maxWidth: 880).frame(maxWidth: .infinity)
+                    }.scrollTargetLayout().padding(padding).frame(maxWidth: 880).frame(maxWidth: .infinity)
                 }
                 .coordinateSpace(name: "history")
                 .defaultScrollAnchor(.bottom)

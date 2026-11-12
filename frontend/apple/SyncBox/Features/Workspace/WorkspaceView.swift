@@ -21,6 +21,7 @@ struct WorkspaceView: View {
 
     var body: some View {
         workspace
+        #if os(iOS)
         .task(id: scenePhase) {
             guard scenePhase == .active else { model.stopEvents(); return }
             model.startEvents()
@@ -30,6 +31,7 @@ struct WorkspaceView: View {
             }
         }
         .onDisappear { model.stopEvents() }
+        #endif
         .task(id: model.selected?.id) { await model.loadMessages() }
         .task(id: model.conversationQuery) {
             do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
@@ -53,9 +55,17 @@ struct WorkspaceView: View {
             Button("取消", role: .cancel) {}
             Button("退出", role: .destructive) { Task { await connection.logout() } }
         } message: { Text("将撤销本设备当前登录，未发送的草稿不会保留。") }
-        .alert("提示", isPresented: Binding(get: { model.error != nil }, set: { if !$0 { model.error = nil } })) {
+        .alert("提示", isPresented: Binding(get: { showsWorkspaceError }, set: { if !$0 { model.error = nil } })) {
             Button("好", role: .cancel) { model.error = nil }
         } message: { Text(model.error ?? "") }
+    }
+
+    private var showsWorkspaceError: Bool {
+        #if os(macOS)
+        model.error != nil && NSApp.keyWindow?.identifier?.rawValue == "syncbox-main"
+        #else
+        model.error != nil
+        #endif
     }
 
     @ViewBuilder private var workspace: some View {
@@ -177,7 +187,11 @@ struct WorkspaceView: View {
             #else
             .navigationTitle("SyncBox")
             #endif
+            #if os(macOS)
+            .navigationSplitViewColumnWidth(min: 240, ideal: 260, max: 320)
+            #else
             .navigationSplitViewColumnWidth(min: 260, ideal: 300, max: 380)
+            #endif
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     Button { edit(nil) } label: {
