@@ -17,12 +17,6 @@ struct SyncBoxApp: App {
         }
         .defaultSize(width: 960, height: 640)
         .windowResizability(.contentMinSize)
-        MenuBarExtra("SyncBox", systemImage: "shippingbox") {
-            MacQuickPanel(connection: connection)
-                .tint(ChatStyle.blue)
-                .task { desktop.configure(connection) }
-        }
-        .menuBarExtraStyle(.window)
         #else
         WindowGroup {
             ContentView(connection: connection).tint(ChatStyle.blue)

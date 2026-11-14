@@ -441,7 +441,10 @@ class WorkspaceController extends ChangeNotifier {
     _sendAttempts.remove(id);
     if (identical(imageDrafts[id], image)) imageDrafts.remove(id);
     if (identical(fileDrafts[id], files)) fileDrafts.remove(id);
-    if (drafts[id] == content) drafts.remove(id);
+    // Sending disables the composer, so the draft cannot change while the
+    // request is in flight. Always clear it after a successful delivery,
+    // including when the user entered trailing whitespace.
+    drafts.remove(id);
     if (selected?.id == id) {
       messagePage = 1;
       messageSearch = '';

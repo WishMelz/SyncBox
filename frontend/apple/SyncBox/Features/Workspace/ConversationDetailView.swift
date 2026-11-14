@@ -435,7 +435,8 @@ struct MessageCard: View {
             .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("更多消息操作")
             #if os(macOS)
             .menuIndicator(.hidden)
-            .opacity(hovered ? 1 : 0.15)
+            // Keep the affordance discoverable without competing with the message.
+            .opacity(hovered ? 1 : 0.32)
             #endif
     }
 }

@@ -4,13 +4,19 @@ import SwiftUI
 
 struct MacQuickPanel: View {
     @Bindable var connection: ConnectionModel
+    private let onOpenMainWindow: (() -> Void)?
     @Environment(\.openWindow) private var openWindow
     @State private var restoring = true
+
+    init(connection: ConnectionModel, onOpenMainWindow: (() -> Void)? = nil) {
+        self.connection = connection
+        self.onOpenMainWindow = onOpenMainWindow
+    }
 
     var body: some View {
         Group {
             if connection.stage == .workspace, let workspace = connection.workspace {
-                MacQuickWorkspacePanel(model: workspace, connection: connection)
+                MacQuickWorkspacePanel(model: workspace, connection: connection, onOpenMainWindow: onOpenMainWindow)
             } else {
                 VStack(spacing: 16) {
                     Image("BrandIcon").resizable().scaledToFit().frame(width: 48, height: 48)
@@ -21,9 +27,7 @@ struct MacQuickPanel: View {
                         Text(connection.error ?? "连接你的服务，开始收发内容。")
                             .font(.callout).foregroundStyle(.secondary).multilineTextAlignment(.center)
                         Button("打开并登录") {
-                            NSApp.setActivationPolicy(.regular)
-                            openWindow(id: "main")
-                            NSApp.activate(ignoringOtherApps: true)
+                            openMainWindow()
                         }.buttonStyle(.borderedProminent)
                     }
                     Button("退出 SyncBox") { NSApp.terminate(nil) }
@@ -34,11 +38,22 @@ struct MacQuickPanel: View {
         .frame(width: 380, height: 560)
         .task { await connection.restore(); restoring = false }
     }
+
+    private func openMainWindow() {
+        if let onOpenMainWindow {
+            onOpenMainWindow()
+        } else {
+            NSApp.setActivationPolicy(.regular)
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
 }
 
 private struct MacQuickWorkspacePanel: View {
     @Bindable var model: WorkspaceModel
     @Bindable var connection: ConnectionModel
+    private let onOpenMainWindow: (() -> Void)?
     @Environment(\.openWindow) private var openWindow
     @State private var creating = false
     @State private var title = ""
@@ -46,6 +61,12 @@ private struct MacQuickWorkspacePanel: View {
     @State private var deleting: Conversation?
     @State private var showSettings = false
     @State private var settingsLocked = false
+
+    init(model: WorkspaceModel, connection: ConnectionModel, onOpenMainWindow: (() -> Void)? = nil) {
+        self.model = model
+        self.connection = connection
+        self.onOpenMainWindow = onOpenMainWindow
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -98,7 +119,7 @@ private struct MacQuickWorkspacePanel: View {
           Divider()
           footer
         }
-        .background(.regularMaterial)
+        .background(Color(nsColor: .windowBackgroundColor))
         .task {
             await model.refresh()
         }
@@ -201,6 +222,20 @@ private struct MacQuickWorkspacePanel: View {
                             .frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        Button(conversation.isPinned == true ? "取消置顶" : "置顶", systemImage: "pin") {
+                            Task { await model.togglePin(conversation) }
+                        }
+                        Button("重命名", systemImage: "pencil") {
+                            editing = conversation
+                            title = conversation.title
+                            creating = true
+                        }
+                        Button("删除会话", systemImage: "trash", role: .destructive) {
+                            deleting = conversation
+                        }
+                    }
+                    .disabled(model.mutating)
                 }
                 .listStyle(.plain)
             }
@@ -238,9 +273,13 @@ private struct MacQuickWorkspacePanel: View {
     }
 
     private func showMainWindow() {
-        NSApp.setActivationPolicy(.regular)
-        openWindow(id: "main")
-        NSApp.activate(ignoringOtherApps: true)
+        if let onOpenMainWindow {
+            onOpenMainWindow()
+        } else {
+            NSApp.setActivationPolicy(.regular)
+            openWindow(id: "main")
+            NSApp.activate(ignoringOtherApps: true)
+        }
     }
 
     private static let dateFormatter: DateFormatter = {

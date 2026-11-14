@@ -188,8 +188,12 @@ class _WorkspacePageState extends State<WorkspacePage>
     listenable: Listenable.merge([controller, widget.connection]),
     builder: (context, _) => LayoutBuilder(
       builder: (context, box) {
-        final mobile = ['android', 'ios'].contains(widget.connection.platform);
         final wide = box.maxWidth >= 800;
+        // A narrow Windows tray window uses the same compact navigation as a
+        // phone. This keeps the tray panel usable without duplicating the
+        // workspace implementation for another platform.
+        final mobile =
+            ['android', 'ios'].contains(widget.connection.platform) || !wide;
         final detailOpen =
             controller.selected != null || controller.favoritesMode;
         final showTabs = mobile && (_section == 1 || wide || !detailOpen);
