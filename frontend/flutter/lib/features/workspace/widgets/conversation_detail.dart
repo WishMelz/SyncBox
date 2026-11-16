@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_selector/file_selector.dart';
 
+import '../../../models/message.dart';
 import '../workspace_controller.dart';
 import 'message_history_feed.dart';
 import 'message_card.dart';
