@@ -1,0 +1,124 @@
+.sidebar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.sidebar-actions .sidebar-create {
+  width: 30px;
+  height: 30px;
+  background: #fff;
+  border-color: #dce5df;
+  border-radius: 7px;
+  box-shadow: none;
+  color: var(--primary);
+}
+.sidebar-actions .sidebar-create:hover {
+  background: var(--secondary);
+}
+.workspace-brand .brand {
+  font-size: 20px;
+  letter-spacing: -0.6px;
+}
+.conversation-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.conversation-row.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 19px;
+  bottom: 19px;
+  width: 2px;
+  border-radius: 2px;
+  background: #57806a;
+}
+.search-box:focus-within {
+  border-color: #91ae9d;
+  box-shadow: 0 0 0 2px #365f5208;
+}
+.composer:focus-within {
+  border-color: #91ae9d;
+}
+.chat-header .icon-btn {
+  width: 30px;
+  height: 30px;
+}
+.composer textarea::placeholder {
+  color: #8b978f;
+}
+@media (max-width: 767px) {
+  .workspace-brand {
+    padding: 0 20px;
+    min-height: 52px;
+  }
+  .chat-header {
+    height: 52px;
+    min-height: 52px;
+    padding: 0 12px;
+    gap: 6px;
+  }
+  .chat-header h2 {
+    font-size: 14px;
+  }
+  .chat-search {
+    padding: 12px 16px;
+  }
+  .message-feed {
+    padding: 0 16px 16px;
+  }
+  .composer {
+    margin: 0 12px max(12px, env(safe-area-inset-bottom));
+    padding: 12px;
+  }
+}
+
+.chat-title-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.chat-title-group h2 {
+  min-width: 0;
+}
+
+.conversation-context-menu {
+  z-index: 90;
+  min-width: 156px;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: 0 8px 28px #253a2e24;
+}
+.conversation-context-menu [role='menuitem'] {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 8px 10px;
+  font-size: 13px;
+  border-radius: 5px;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+}
+.conversation-context-menu [role='menuitem'][data-highlighted] {
+  background: var(--secondary);
+}
+.conversation-context-menu [role='menuitem'][data-disabled] {
+  opacity: 0.4;
+  cursor: default;
+}
+.conversation-context-menu .context-danger {
+  color: #ae3c38;
+}
+.conversation-context-menu [role='separator'] {
+  height: 1px;
+  margin: 4px;
+  background: var(--border);
+}

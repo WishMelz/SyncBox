@@ -13,6 +13,7 @@ struct AttachmentView: View {
     let file: Attachment
     let model: WorkspaceModel
     var query = ""
+    var remove: (() -> Void)? = nil
     @State private var preview: Data?
     @State private var document: AttachmentDocument?
     @State private var exporting = false
@@ -32,14 +33,21 @@ struct AttachmentView: View {
                     Text(file.deletedAt != nil ? "文件已清理" : ByteCountFormatter.string(fromByteCount: Int64(file.size), countStyle: .file)).font(.caption).foregroundStyle(ChatStyle.muted)
                 }
                 Spacer()
-                Button {
-                    downloading = true
-                    Task {
-                        defer { downloading = false }
-                        do { document = AttachmentDocument(data: try await model.attachmentData(message, file: file)); exporting = true }
-                        catch { model.error = userFacingError(error) }
+                Menu {
+                    Button {
+                        downloading = true
+                        Task {
+                            defer { downloading = false }
+                            do { document = AttachmentDocument(data: try await model.attachmentData(message, file: file)); exporting = true }
+                            catch { model.error = userFacingError(error) }
+                        }
+                    } label: { Label(downloading ? "保存中…" : "保存文件", systemImage: "arrow.down.to.line") }
+                    if let remove {
+                        Button("删除文件", systemImage: "trash", role: .destructive, action: remove)
                     }
-                } label: { Label(downloading ? "保存中…" : "保存文件", systemImage: "arrow.down.to.line") }.labelStyle(.iconOnly).disabled(file.deletedAt != nil || downloading)
+                } label: { Image(systemName: "ellipsis").frame(width: 28, height: 28) }
+                    .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("文件操作")
+                    .disabled((file.deletedAt != nil || downloading) && remove == nil)
             }.padding(10).background(.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
         }
         .task(id: file.id) { if file.hasPreview == true && file.deletedAt == nil { await loadPreview() } }

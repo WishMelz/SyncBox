@@ -16,13 +16,15 @@ struct ConversationDetailView: View {
     let delete: () -> Void
     var compact = false
     @State private var annotatingMessage: Message?
+    @State private var editingMessage: Message?
     @State private var deletingMessage: Message?
+    @State private var deletingAttachment: (message: Message, file: Attachment)?
+    @State private var deletingImage: Message?
     @State private var copiedID: String?
     @State private var choosingImage = false
     @State private var choosingFiles = false
     @State private var searchOpen = false
     @FocusState private var searchFocused: Bool
-    private var orderedMessages: [Message] { Array(model.messages.items.reversed()) }
     #if os(iOS)
     @State private var photo: PhotosPickerItem?
     #endif
@@ -44,23 +46,11 @@ struct ConversationDetailView: View {
                             ContentUnavailableView(model.messageQuery.isEmpty ? "从一条消息开始" : "没有找到相关内容", systemImage: "text.bubble", description: Text(model.messageQuery.isEmpty ? "发送文字、图片或文件，其他设备会同步显示。" : "试试其他关键词。"))
                                 .frame(maxWidth: .infinity)
                         }
+                        // Build the chronological array once per data update, not once
+                        // per row when a scroll control changes its visibility.
+                        let orderedMessages = Array(model.messages.items.reversed())
                         ForEach(Array(orderedMessages.enumerated()), id: \.element.id) { index, message in
-                            if MessagePresentation.startsDay(message.createdAt, previous: index > 0 ? orderedMessages[index - 1].createdAt : nil) {
-                                // Keep the date marker consistent with the web and Flutter clients:
-                                // a compact, translucent muted pill with generous separation from
-                                // the message groups. A white fill made the marker look like a
-                                // message bubble on the tinted chat background.
-                                Text(MessagePresentation.dayLabel(message.createdAt))
-                                    .font(.system(size: 11))
-                                    .foregroundStyle(ChatStyle.muted)
-                                    .lineSpacing(1.4)
-                                    .padding(.horizontal, 11)
-                                    .padding(.vertical, 4)
-                                    .background(ChatStyle.muted.opacity(0.19), in: Capsule())
-                                    .frame(maxWidth: .infinity)
-                                    .padding(.top, 10)
-                                    .padding(.bottom, 17)
-                            }
+                            DatedMessageRow(createdAt: message.createdAt, previous: index > 0 ? orderedMessages[index - 1].createdAt : nil) {
                             MessageCard(message: message, model: model, query: model.messageQuery, copied: copiedID == message.id, copy: {
                                 #if os(macOS)
                                 NSPasteboard.general.clearContents()
@@ -69,8 +59,11 @@ struct ConversationDetailView: View {
                                 UIPasteboard.general.string = message.content
                                 #endif
                                 copiedID = message.id
-                            }, annotate: { annotatingMessage = message }, star: { Task { await model.toggleStar(message) } }, delete: { deletingMessage = message })
-                            .id(message.id)
+                            }, annotate: { annotatingMessage = message }, edit: { editingMessage = message },
+                            deleteAttachment: { file in deletingAttachment = (message, file) },
+                            deleteImage: { deletingImage = message },
+                            star: { Task { await model.toggleStar(message) } }, delete: { deletingMessage = message })
+                            }.id(message.id)
                         }
             }.id(model.historyKey)
             .background(ChatStyle.background)
@@ -180,6 +173,9 @@ struct ConversationDetailView: View {
         .sheet(item: $annotatingMessage) { message in
             AnnotationEditor(message: message, model: model)
         }
+        .sheet(item: $editingMessage) { message in
+            MessageEditor(message: message, model: model)
+        }
         .navigationTitle(compact ? "" : conversation.title)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
@@ -222,6 +218,24 @@ struct ConversationDetailView: View {
                 deletingMessage = nil
             }
         } message: { Text("消息会从所有设备永久删除。") }
+        .alert("删除文件？", isPresented: Binding(get: { deletingAttachment != nil }, set: { if !$0 { deletingAttachment = nil } })) {
+            Button("取消", role: .cancel) { deletingAttachment = nil }
+            Button("删除", role: .destructive) {
+                if let target = deletingAttachment {
+                    Task { do { try await model.deleteAttachment(target.message, file: target.file) } catch { model.error = userFacingError(error) } }
+                }
+                deletingAttachment = nil
+            }
+        } message: { Text("文件会从消息中移除，消息文字会保留。") }
+        .alert("删除图片？", isPresented: Binding(get: { deletingImage != nil }, set: { if !$0 { deletingImage = nil } })) {
+            Button("取消", role: .cancel) { deletingImage = nil }
+            Button("删除", role: .destructive) {
+                if let message = deletingImage {
+                    Task { do { try await model.deleteImage(message) } catch { model.error = userFacingError(error) } }
+                }
+                deletingImage = nil
+            }
+        } message: { Text("图片会从消息中移除，消息文字会保留。") }
     }
 
     private var composerHint: String {
@@ -262,76 +276,29 @@ struct ConversationDetailView: View {
     #endif
 }
 
-private struct HistoryEdges: PreferenceKey {
-    static var defaultValue: [String: CGFloat] = [:]
-    static func reduce(value: inout [String: CGFloat], nextValue: () -> [String: CGFloat]) {
-        value.merge(nextValue()) { _, new in new }
-    }
-}
-
-private struct HistoryMessageList<Content: View>: View {
-    let model: WorkspaceModel
-    var padding: CGFloat = 20
+/// One stable lazy-list child per message. Date separators must be inside the
+/// row; a conditional sibling makes SwiftUI inspect every row to count targets.
+private struct DatedMessageRow<Content: View>: View {
+    let createdAt: String
+    let previous: String?
     @ViewBuilder let content: () -> Content
-    @State private var initialized = false
-    private var history: MessageHistory { model.messageHistory }
+
     var body: some View {
-        GeometryReader { viewport in
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 16) {
-                        if history.loadingOlder || history.olderError != nil || history.hasOlder {
-                            HStack {
-                                Spacer()
-                                if history.loadingOlder { Text("正在加载更早消息…") }
-                                else if history.olderError != nil {
-                                    Button("加载失败，点击重试") { Task { await model.loadOlderMessages() } }
-                                } else { Text("向上滚动查看更早消息") }
-                                Spacer()
-                            }.font(.caption).foregroundStyle(.secondary).frame(height: 28)
-                                .background(GeometryReader { geometry in
-                                    Color.clear.preference(key: HistoryEdges.self, value: ["top": geometry.frame(in: .named("history")).minY])
-                                })
-                        }
-                        content()
-                        Color.clear.frame(height: 1).id("bottom")
-                            .background(GeometryReader { geometry in
-                                Color.clear.preference(key: HistoryEdges.self, value: ["bottom": geometry.frame(in: .named("history")).maxY])
-                            })
-                    }.scrollTargetLayout().padding(padding).frame(maxWidth: 880).frame(maxWidth: .infinity)
-                }
-                .coordinateSpace(name: "history")
-                .defaultScrollAnchor(.bottom)
-                .scrollPosition(id: Binding(get: { history.positionID }, set: { history.positionID = $0 }), anchor: .top)
-                .onPreferenceChange(HistoryEdges.self) { edges in
-                    guard initialized else { return }
-                    if let bottom = edges["bottom"] { history.atBottom = bottom <= viewport.size.height + 64 && bottom > 0 }
-                    else { history.atBottom = false }
-                    if let top = edges["top"], top > -120, top < viewport.size.height,
-                       history.hasOlder, !history.loadingOlder, history.olderError == nil {
-                        Task { await model.loadOlderMessages() }
-                    }
-                }
-                .onAppear { restore(proxy) }
-                .onChange(of: model.messages.items.first?.id) { old, _ in
-                    if !initialized { restore(proxy) }
-                    else if old != nil && history.atBottom { proxy.scrollTo("bottom", anchor: .bottom) }
-                }
-                .onChange(of: model.scrollToLatest) { _, _ in proxy.scrollTo("bottom", anchor: .bottom) }
-                .overlay(alignment: .bottomTrailing) {
-                    if initialized && !history.atBottom && !model.messages.items.isEmpty {
-                        Button { proxy.scrollTo("bottom", anchor: .bottom) } label: { Label("回到底部", systemImage: "arrow.down") }
-                            .buttonStyle(.bordered).padding(12)
-                    }
-                }
+        VStack(alignment: .leading, spacing: 16) {
+            if MessagePresentation.startsDay(createdAt, previous: previous) {
+                Text(MessagePresentation.dayLabel(createdAt))
+                    .font(.system(size: 11))
+                    .foregroundStyle(ChatStyle.muted)
+                    .lineSpacing(1.4)
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 4)
+                    .background(ChatStyle.muted.opacity(0.19), in: Capsule())
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 10)
+                    .padding(.bottom, 17)
             }
+            content()
         }
-    }
-    private func restore(_ proxy: ScrollViewProxy) {
-        guard !model.messages.items.isEmpty else { return }
-        if !history.atBottom, let id = history.positionID { proxy.scrollTo(id, anchor: .top) }
-        else { proxy.scrollTo("bottom", anchor: .bottom) }
-        initialized = true
     }
 }
 
@@ -343,6 +310,9 @@ struct MessageCard: View {
     let copied: Bool
     let copy: () -> Void
     let annotate: () -> Void
+    var edit: (() -> Void)? = nil
+    var deleteAttachment: ((Attachment) -> Void)? = nil
+    var deleteImage: (() -> Void)? = nil
     @State private var expandedNote = false
     @State private var hovered = false
     let star: () -> Void
@@ -366,12 +336,15 @@ struct MessageCard: View {
         return date.formatted(date: showDate ? .abbreviated : .omitted, time: .shortened)
     }
     private var menuActions: [MessageMenuAction] {
-        [
+        var actions = [
             MessageMenuAction(id: "copy", title: copied ? "已复制" : "复制内容", symbol: copied ? "checkmark" : "doc.on.doc", perform: copy),
             MessageMenuAction(id: "star", title: message.isStarred ? "取消收藏" : "收藏", symbol: message.isStarred ? "star.fill" : "star", perform: star),
-            MessageMenuAction(id: "annotate", title: (message.annotation ?? "").isEmpty ? "添加批注" : "编辑批注", symbol: "text.bubble", perform: annotate),
-            MessageMenuAction(id: "delete", title: "删除消息", symbol: "trash", destructive: true, perform: delete)
+            MessageMenuAction(id: "annotate", title: (message.annotation ?? "").isEmpty ? "添加批注" : "编辑批注", symbol: "text.bubble", perform: annotate)
         ]
+        if own && edit != nil && message.image == nil && (message.attachments ?? []).isEmpty { actions.append(MessageMenuAction(id: "edit", title: "编辑消息", symbol: "pencil", perform: edit!)) }
+        if message.image != nil, let deleteImage { actions.append(MessageMenuAction(id: "delete-image", title: "删除图片", symbol: "trash", destructive: true, perform: deleteImage)) }
+        actions.append(MessageMenuAction(id: "delete", title: "删除消息", symbol: "trash", destructive: true, perform: delete))
+        return actions
     }
     private var actions: some View {
         ForEach(menuActions) { action in
@@ -388,8 +361,8 @@ struct MessageCard: View {
                 Text(message.senderDevice?.name ?? "未登记设备").font(.caption2).fontWeight(own ? .semibold : .medium)
                     .foregroundStyle(own ? ChatStyle.blue : ChatStyle.muted).lineLimit(1)
                 if message.filesExpired == true { Label("图片已清理", systemImage: "photo").font(.caption).foregroundStyle(ChatStyle.muted) }
-                ForEach(message.attachments ?? []) { file in AttachmentView(message: message, file: file, model: model, query: query) }
-                if message.image != nil { ImageMessageView(messageID: message.id, model: model) }
+                ForEach(message.attachments ?? []) { file in AttachmentView(message: message, file: file, model: model, query: query, remove: deleteAttachment.map { handler in { handler(file) } }) }
+                if message.image != nil { ImageMessageView(messageID: message.id, model: model, remove: deleteImage) }
                 if hasBody { HighlightedText(text: message.content, query: query, links: true).textSelection(.enabled).fixedSize(horizontal: false, vertical: true) }
                 if let note = message.annotation, !note.isEmpty {
                     let matched = !MessagePresentation.matches(note, query: query).isEmpty
@@ -495,6 +468,62 @@ struct AnnotationEditor: View {
         error = nil
         Task {
             do { try await model.saveAnnotation(message, text: value); dismiss() }
+            catch { self.error = userFacingError(error) }
+            saving = false
+        }
+    }
+}
+
+struct MessageEditor: View {
+    let message: Message
+    let model: WorkspaceModel
+    @Environment(\.dismiss) private var dismiss
+    @State private var text: String
+    @State private var saving = false
+    @State private var error: String?
+    @FocusState private var focused: Bool
+
+    init(message: Message, model: WorkspaceModel) {
+        self.message = message
+        self.model = model
+        _text = State(initialValue: message.content)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("编辑消息").font(.headline)
+            TextEditor(text: $text).focused($focused).frame(minHeight: 140).padding(6)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(.secondary.opacity(0.3)))
+                .disabled(saving)
+            HStack {
+                Text("仅可编辑纯文字消息")
+                Spacer()
+                Text("\(text.count) / 50000")
+            }.font(.caption2).foregroundStyle(.secondary)
+            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+            HStack {
+                Spacer()
+                Button("取消") { dismiss() }.disabled(saving)
+                Button(saving ? "保存中…" : "保存") { save() }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(saving || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || text.count > 50_000 || text == message.content)
+            }
+        }
+        .padding(24)
+        .frame(idealWidth: 480, idealHeight: 320)
+        #if os(macOS)
+        .frame(minWidth: 420, minHeight: 280)
+        #endif
+        .interactiveDismissDisabled(saving)
+        .onAppear { focused = true }
+    }
+
+    private func save() {
+        guard !saving else { return }
+        saving = true
+        error = nil
+        Task {
+            do { try await model.editMessage(message, content: text); dismiss() }
             catch { self.error = userFacingError(error) }
             saving = false
         }

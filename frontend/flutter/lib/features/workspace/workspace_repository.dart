@@ -77,6 +77,22 @@ class WorkspaceRepository {
     await api.request('/messages/${message.id}', method: 'DELETE');
   }
 
+  Future<void> editMessage(Message message, String content) async {
+    await api.request(
+      '/messages/${message.id}',
+      method: 'PATCH',
+      body: {'content': content.trim()},
+    );
+  }
+
+  Future<void> deleteAttachment(Message message, Attachment file) async {
+    await api.removeAttachment(message.id, file.id);
+  }
+
+  Future<void> deleteImage(Message message) async {
+    await api.removeImage(message.id);
+  }
+
   Future<void> send(String id, String content, {String? clientId}) async {
     await api.request(
       '/conversations/$id/messages',

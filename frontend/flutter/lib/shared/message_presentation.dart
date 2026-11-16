@@ -80,7 +80,8 @@ String messageDayLabel(DateTime date, {DateTime? now}) {
 }
 
 Future<void> openMessageLink(Uri url) async {
-  if (!['http', 'https'].contains(url.scheme.toLowerCase()) || url.host.isEmpty) {
+  if (!['http', 'https'].contains(url.scheme.toLowerCase()) ||
+      url.host.isEmpty) {
     throw const FormatException('无效链接');
   }
   final opened = await const MethodChannel('syncbox/links')

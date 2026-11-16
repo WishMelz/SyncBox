@@ -214,7 +214,9 @@ class _ConnectionPageState extends State<ConnectionPage> {
                             : isServer
                             ? '连接服务'
                             : c.initialized
-                            ? c.requiresTwoFactor ? '验证并登录' : '登录'
+                            ? c.requiresTwoFactor
+                                  ? '验证并登录'
+                                  : '登录'
                             : '完成首次设置',
                       ),
                     ),

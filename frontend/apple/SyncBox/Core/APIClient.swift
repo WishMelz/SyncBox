@@ -53,6 +53,18 @@ extension APITransport {
     func remove(_ path: String, method: String = "DELETE") async throws {
         _ = try await request(path, method: method, query: [:], body: nil)
     }
+
+    func editMessage(_ messageID: String, content: String) async throws -> Message {
+        try await send("/messages/\(messageID)", method: "PATCH", body: ["content": content])
+    }
+
+    func removeAttachment(_ messageID: String, attachmentID: String) async throws {
+        try await remove("/messages/\(messageID)/attachments/\(attachmentID)")
+    }
+
+    func removeImage(_ messageID: String) async throws {
+        try await remove("/messages/\(messageID)/image")
+    }
 }
 
 final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate, @unchecked Sendable {

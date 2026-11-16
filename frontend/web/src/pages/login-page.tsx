@@ -4,12 +4,17 @@ import { BrandIcon } from '@/components/ui/brand-icon';
 import { Button } from '@/components/ui/button';
 import { ApiError } from '@/services/api';
 import { authApi, type Session } from '@/services/auth';
-export function LoginPage({ onLogin }: { onLogin: (s: Session) => Promise<void> }) {
+export function LoginPage({
+  onLogin,
+}: {
+  onLogin: (s: Session, remember: boolean) => Promise<void>;
+}) {
   const [twoFactor, setTwoFactor] = useState(false);
   const [register, setRegister] = useState(false),
     [ready, setReady] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  const [remember, setRemember] = useState(true);
   async function loadStatus() {
     setError('');
     setReady(false);
@@ -43,7 +48,7 @@ export function LoginPage({ onLogin }: { onLogin: (s: Session) => Promise<void> 
           );
       setRegister(false);
       setTwoFactor(false);
-      await onLogin(s);
+      await onLogin(s, remember);
     } catch (e) {
       if (e instanceof ApiError && e.code === 'TWO_FACTOR_REQUIRED') {
         setTwoFactor(true);
@@ -155,6 +160,14 @@ export function LoginPage({ onLogin }: { onLogin: (s: Session) => Promise<void> 
                 <small>密码已验证。请输入验证器中的 6 位动态码，或一个未使用的恢复码。</small>
               </label>
             )}
+            <label className="remember-login">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={(event) => setRemember(event.target.checked)}
+              />
+              <span>在此设备保持登录</span>
+            </label>
             {error && (
               <p role="alert" className="error-note">
                 {error}

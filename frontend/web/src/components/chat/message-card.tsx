@@ -8,7 +8,7 @@ import { copyText } from '@/lib/clipboard';
 import { splitMessageLinks } from '@/lib/message-presentation';
 import { HighlightText } from '@/components/ui/highlight-text';
 import { findHighlightRanges, sliceHighlightRanges } from '@/lib/search-highlight';
-import { Check, Copy, Star, Trash2, MessageSquareText } from 'lucide-react';
+import { Check, Copy, Star, Trash2, MessageSquareText, Pencil, X } from 'lucide-react';
 import type { Message } from '@/services/messages';
 export function MessageCard({
   message,
@@ -18,6 +18,7 @@ export function MessageCard({
   searchQuery,
   onAnnotate,
   onStar,
+  onEdit,
   onDelete,
   onError,
 }: {
@@ -28,6 +29,7 @@ export function MessageCard({
   searchQuery?: string;
   onAnnotate: () => void;
   onStar: () => void;
+  onEdit?: (content: string) => Promise<void>;
   onDelete: () => void;
   onError: (error: unknown) => void;
 }) {
@@ -53,6 +55,9 @@ export function MessageCard({
   });
   const [copied, setCopied] = useState(false),
     [error, setError] = useState('');
+  const [editing, setEditing] = useState(false);
+  const [editText, setEditText] = useState(message.content);
+  const [editBusy, setEditBusy] = useState(false);
   const bubble = useRef<HTMLDivElement>(null);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
@@ -66,6 +71,21 @@ export function MessageCard({
     focusBubble();
     onAnnotate();
   };
+  const canEdit = !!onEdit && isOwn && !message.image && !message.attachments?.length;
+  async function saveEdit() {
+    const value = editText.trim();
+    if (!value || editBusy || value === message.content) return;
+    setEditBusy(true);
+    setError('');
+    try {
+      await onEdit?.(value);
+      setEditing(false);
+    } catch {
+      setError('保存编辑失败，请重试。');
+    } finally {
+      setEditBusy(false);
+    }
+  }
   async function copy() {
     try {
       await copyText(message.content);
@@ -94,6 +114,20 @@ export function MessageCard({
       onSelect: openAnnotation,
       opensDialog: true,
     },
+    ...(canEdit
+      ? [
+          {
+            label: '编辑消息',
+            icon: <Pencil size={15} />,
+            onSelect: () => {
+              focusBubble();
+              setEditText(message.content);
+              setError('');
+              setEditing(true);
+            },
+          } satisfies MenuAction,
+        ]
+      : []),
     {
       label: '删除消息',
       icon: <Trash2 size={15} />,
@@ -124,12 +158,57 @@ export function MessageCard({
                 searchQuery={searchQuery}
               />
             )}
-            {(!message.attachments?.length ||
-              message.content !==
-                `[附件] ${message.attachments.map((file) => file.name).join('、')}`) &&
+            {editing ? (
+              <div className="message-edit-box">
+                <textarea
+                  autoFocus
+                  value={editText}
+                  maxLength={50000}
+                  disabled={editBusy}
+                  onChange={(event) => setEditText(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      setEditing(false);
+                      setEditText(message.content);
+                    }
+                    if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
+                      event.preventDefault();
+                      void saveEdit();
+                    }
+                  }}
+                />
+                <div className="message-edit-actions">
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    aria-label="取消编辑"
+                    disabled={editBusy}
+                    onClick={() => {
+                      setEditing(false);
+                      setEditText(message.content);
+                    }}
+                  >
+                    <X size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-btn"
+                    aria-label="保存编辑"
+                    disabled={editBusy || !editText.trim() || editText.trim() === message.content}
+                    onClick={() => void saveEdit()}
+                  >
+                    <Check size={15} />
+                  </button>
+                </div>
+              </div>
+            ) : (
+              (!message.attachments?.length ||
+                message.content !==
+                  `[附件] ${message.attachments.map((file) => file.name).join('、')}`) &&
               (!message.image || message.content !== '[图片]') && (
                 <p className="message-text">{linkedContent}</p>
-              )}
+              )
+            )}
             {message.annotation && (
               <aside className="message-annotation" aria-label="消息批注">
                 <button className="annotation-label" onClick={onAnnotate} title="编辑批注">

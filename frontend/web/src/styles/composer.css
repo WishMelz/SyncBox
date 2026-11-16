@@ -1,0 +1,137 @@
+.composer {
+  margin: 0 24px 20px;
+  border: 1px solid #dce5df;
+  border-radius: 10px;
+  background: #fff;
+  padding: 14px;
+  box-shadow: 0 2px 6px #253a2e04;
+}
+.composer textarea {
+  resize: vertical;
+  min-height: 60px;
+  max-height: 220px;
+  width: 100%;
+  outline: none;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.composer > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+.composer span {
+  font-size: 10px;
+  color: #9ca595;
+}
+.welcome-space {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 30px;
+}
+.welcome-mark {
+  padding: 25px;
+  background: #eaf0e3;
+  color: #6f8c5e;
+  border-radius: 24px;
+  margin-bottom: 30px;
+  transform: rotate(-6deg);
+}
+.welcome-space h2 {
+  font-size: 26px;
+  font-weight: 550;
+  letter-spacing: -0.6px;
+  margin-bottom: 15px;
+}
+.welcome-space > p:not(.eyebrow) {
+  font-size: 13px;
+  line-height: 2;
+  color: #8a9682;
+  margin-bottom: 26px;
+}
+.welcome-devices {
+  display: flex;
+  gap: 13px;
+  align-items: center;
+  font-size: 11px;
+  color: #9ca693;
+  margin-top: 55px;
+}
+.feed-empty,
+.list-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: #95a18e;
+  text-align: center;
+  padding: 45px 15px;
+  gap: 12px;
+}
+.feed-empty {
+  min-height: 240px;
+  height: 100%;
+}
+.feed-empty > span {
+  padding: 20px;
+  border-radius: 20px;
+  background: #eef3e8;
+  color: #91a17b;
+}
+.feed-empty h3 {
+  font-size: 16px;
+  font-weight: 500;
+  color: #56665c;
+}
+.feed-empty p {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #859087;
+}
+.list-empty p {
+  font-size: 13px;
+}
+.list-empty small {
+  font-size: 11px;
+}
+.pagination {
+  display: flex;
+  justify-content: center;
+  gap: 15px;
+  align-items: center;
+  padding: 12px;
+  font-size: 11px;
+  color: #89967f;
+}
+.pagination button:disabled {
+  opacity: 0.3;
+}
+.mobile-back {
+  display: none;
+}
+.connection-error {
+  position: fixed;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: 90vw;
+  z-index: 60;
+  background: #fff0eb;
+  color: #9d412c;
+  border: 1px solid #f5c8b8;
+  border-radius: 10px;
+  padding: 13px 18px;
+  font-size: 13px;
+  display: flex;
+  gap: 12px;
+}
+.error-note {
+  color: #a44932;
+  font-size: 12px;
+}

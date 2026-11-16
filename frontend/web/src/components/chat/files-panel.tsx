@@ -1,14 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
-import { FileImage, FileText, FolderOpen, Search, X } from 'lucide-react';
+import { FileImage, FileText, FolderOpen, Search, Trash2, X } from 'lucide-react';
 import { filesApi, type FileItem, type FilePage } from '@/services/files';
 import { ApiError } from '@/services/api';
 import { formatBytes } from '@/lib/attachments';
 import { HighlightText } from '@/components/ui/highlight-text';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { MessageImage } from './message-image';
 import { MessageAttachments } from './message-attachments';
 import type { Attachment } from '@/services/messages';
 
 type FileKind = 'all' | 'image' | 'attachment';
+type FileSort = 'newest' | 'oldest' | 'name' | 'size';
 
 export function FilesPanel({
   token,
@@ -21,14 +23,23 @@ export function FilesPanel({
   onOpenConversation: (conversationId: string) => void;
   onExpired: () => void;
 }) {
-  const [data, setData] = useState<FilePage>({ items: [], total: 0, page: 1, pageSize: 30, totalPages: 0 });
+  const [data, setData] = useState<FilePage>({
+    items: [],
+    total: 0,
+    page: 1,
+    pageSize: 30,
+    totalPages: 0,
+  });
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
   const [kind, setKind] = useState<FileKind>('all');
+  const [sort, setSort] = useState<FileSort>('newest');
   const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [fileToDelete, setFileToDelete] = useState<FileItem | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const panel = useRef<HTMLElement>(null);
 
   useEffect(() => {
@@ -49,7 +60,7 @@ export function FilesPanel({
     setLoading(true);
     setError('');
     void filesApi
-      .list(token, { q: query, page, ...(kind === 'all' ? {} : { kind }) }, controller.signal)
+      .list(token, { q: query, page, sort, ...(kind === 'all' ? {} : { kind }) }, controller.signal)
       .then((result) => {
         if (!active) return;
         if (page > 1 && !result.items.length) setPage(Math.max(1, result.totalPages));
@@ -67,7 +78,7 @@ export function FilesPanel({
       active = false;
       controller.abort();
     };
-  }, [token, query, page, kind, refresh, onExpired]);
+  }, [token, query, page, kind, sort, refresh, onExpired]);
 
   function attachment(file: FileItem): Attachment {
     return {
@@ -80,6 +91,26 @@ export function FilesPanel({
       width: file.width,
       height: file.height,
     };
+  }
+  async function removeFile(file: FileItem) {
+    if (deleting) return;
+    setDeleting(true);
+    setError('');
+    try {
+      await filesApi.remove(token, file);
+      setData((current) => ({
+        ...current,
+        items: current.items.filter((item) => !(item.id === file.id && item.kind === file.kind)),
+        total: Math.max(0, current.total - 1),
+      }));
+      setFileToDelete(null);
+      setRefresh((value) => value + 1);
+    } catch (reason: unknown) {
+      if (reason instanceof ApiError && reason.status === 401) onExpired();
+      else setError(reason instanceof ApiError ? reason.message : '删除文件失败，请重试。');
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -136,6 +167,22 @@ export function FilesPanel({
               </button>
             ))}
           </div>
+          <label className="files-sort">
+            <span>排序</span>
+            <select
+              aria-label="文件排序"
+              value={sort}
+              onChange={(event) => {
+                setSort(event.target.value as FileSort);
+                setPage(1);
+              }}
+            >
+              <option value="newest">最新上传</option>
+              <option value="oldest">最早上传</option>
+              <option value="name">文件名</option>
+              <option value="size">文件大小</option>
+            </select>
+          </label>
         </div>
         <div className="favorites-content files-content" aria-busy={loading}>
           {error && (
@@ -174,7 +221,12 @@ export function FilesPanel({
                       <MessageImage
                         id={file.messageId}
                         token={token}
-                        info={{ mimeType: file.mimeType, width: file.width ?? 1, height: file.height ?? 1, size: file.size }}
+                        info={{
+                          mimeType: file.mimeType,
+                          width: file.width ?? 1,
+                          height: file.height ?? 1,
+                          size: file.size,
+                        }}
                         hideDownload
                       />
                     </div>
@@ -195,8 +247,20 @@ export function FilesPanel({
                       <strong title={file.name}>
                         <HighlightText text={file.name} query={query} />
                       </strong>
-                      <small>{formatBytes(file.size)} · {new Date(file.createdAt).toLocaleString('zh-CN')}</small>
+                      <small>
+                        {formatBytes(file.size)} ·{' '}
+                        {new Date(file.createdAt).toLocaleString('zh-CN')}
+                      </small>
                     </span>
+                    <button
+                      type="button"
+                      className="file-entry-delete"
+                      aria-label={`删除 ${file.name}`}
+                      title="删除文件"
+                      onClick={() => setFileToDelete(file)}
+                    >
+                      <Trash2 size={15} />
+                    </button>
                   </div>
                 </article>
               ))}
@@ -208,13 +272,28 @@ export function FilesPanel({
             <button disabled={page === 1 || loading} onClick={() => setPage((value) => value - 1)}>
               上一页
             </button>
-            <span>{page} / {data.totalPages}</span>
-            <button disabled={page >= data.totalPages || loading} onClick={() => setPage((value) => value + 1)}>
+            <span>
+              {page} / {data.totalPages}
+            </span>
+            <button
+              disabled={page >= data.totalPages || loading}
+              onClick={() => setPage((value) => value + 1)}
+            >
               下一页
             </button>
           </div>
         )}
       </section>
+      {fileToDelete && (
+        <ConfirmDialog
+          title="删除这个文件？"
+          confirmLabel="删除文件"
+          onCancel={() => !deleting && setFileToDelete(null)}
+          onConfirm={() => void removeFile(fileToDelete)}
+        >
+          “{fileToDelete.name}”会从这条消息和所有设备中移除，消息文字会保留。
+        </ConfirmDialog>
+      )}
     </div>
   );
 }

@@ -38,15 +38,24 @@ func prepareImage(_ data: Data) throws -> Data {
 struct ImageMessageView: View {
     let messageID: String
     let model: WorkspaceModel
+    var remove: (() -> Void)? = nil
     @State private var data: Data?
     @State private var loading = true
     @State private var expanded = false
     var body: some View {
         Group {
             if let data, let image = platformImage(data) {
-                Button { expanded = true } label: {
-                    image.resizable().scaledToFit().frame(maxWidth: 480, maxHeight: 320).clipShape(RoundedRectangle(cornerRadius: 10))
-                }.buttonStyle(.plain).accessibilityLabel("查看图片")
+                HStack(alignment: .top, spacing: 4) {
+                    Button { expanded = true } label: {
+                        image.resizable().scaledToFit().frame(maxWidth: 480, maxHeight: 320).clipShape(RoundedRectangle(cornerRadius: 10))
+                    }.buttonStyle(.plain).accessibilityLabel("查看图片")
+                    if let remove {
+                        Menu {
+                            Button("删除图片", systemImage: "trash", role: .destructive, action: remove)
+                        } label: { Image(systemName: "ellipsis").frame(width: 28, height: 28) }
+                            .menuStyle(.borderlessButton).fixedSize().accessibilityLabel("图片操作")
+                    }
+                }
                 .sheet(isPresented: $expanded) {
                     VStack {
                         HStack { Text("图片预览").font(.headline); Spacer(); Button("完成") { expanded = false } }.padding()

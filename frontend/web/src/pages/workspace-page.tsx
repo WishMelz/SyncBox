@@ -35,6 +35,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { HighlightText } from '@/components/ui/highlight-text';
 import { AttachmentDrafts } from '@/components/chat/attachment-drafts';
 import { validateAttachments } from '@/lib/attachments';
@@ -108,6 +109,7 @@ export function WorkspacePage({
     [devices, setDevices] = useState<Device[]>([]),
     [deviceEdit, setDeviceEdit] = useState<string | null>(null),
     [deviceName, setDeviceName] = useState('');
+  const [deviceToRemove, setDeviceToRemove] = useState<Device | null>(null);
   const [attachments, setAttachments] = useState<Record<string, File[]>>({});
   const [sendNotices, setSendNotices] = useState<Record<string, { text: string; failed: boolean }>>(
     {},
@@ -611,6 +613,7 @@ export function WorkspacePage({
   async function showDevices() {
     setDialog('devices');
     setDeviceEdit(null);
+    setDeviceToRemove(null);
     setDevices([]);
     setError('');
     try {
@@ -627,6 +630,20 @@ export function WorkspacePage({
       const value = await devicesApi.rename(token, deviceEdit, deviceName.trim());
       setDevices((list) => list.map((item) => (item.id === value.id ? value : item)));
       setDeviceEdit(null);
+    } catch (e) {
+      fail(e);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function removeDevice(device: Device) {
+    if (busy || device.id === session.user.deviceId) return;
+    setBusy(true);
+    setError('');
+    try {
+      await devicesApi.remove(token, device.id);
+      setDevices((list) => list.filter((item) => item.id !== device.id));
+      setDeviceToRemove(null);
     } catch (e) {
       fail(e);
     } finally {
@@ -656,6 +673,21 @@ export function WorkspacePage({
       await refresh();
     } catch (e) {
       fail(e);
+    }
+  }
+  async function editMessage(message: Message, content: string) {
+    try {
+      const updated = await messagesApi.update(token, message.id, { content });
+      feed.history.updateMessage(updated);
+      try {
+        await refresh();
+      } catch (e) {
+        if (e instanceof ApiError && e.status === 401) throw e;
+        setError('消息已编辑，列表暂未更新。');
+      }
+    } catch (e) {
+      fail(e);
+      throw e;
     }
   }
   return (
@@ -1050,6 +1082,7 @@ export function WorkspacePage({
                   onStar={(m) =>
                     void action(() => messagesApi.update(token, m.id, { isStarred: !m.isStarred }))
                   }
+                  onEdit={editMessage}
                   onDelete={(m) => void action(() => messagesApi.remove(token, m.id))}
                 />
               )}
@@ -1385,8 +1418,8 @@ export function WorkspacePage({
                         · 最近活动 {new Date(d.lastSeenAt).toLocaleString('zh-CN')}
                       </small>
                     </span>
-                    {d.id === session.user.deviceId &&
-                      (deviceEdit === d.id ? (
+                    {d.id === session.user.deviceId ? (
+                      deviceEdit === d.id ? (
                         <>
                           <button
                             className="device-edit-button"
@@ -1413,7 +1446,16 @@ export function WorkspacePage({
                         >
                           改名
                         </button>
-                      ))}
+                      )
+                    ) : (
+                      <button
+                        className="device-edit-button device-remove-button"
+                        disabled={busy}
+                        onClick={() => setDeviceToRemove(d)}
+                      >
+                        移除
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1463,6 +1505,16 @@ export function WorkspacePage({
             )}
           </section>
         </div>
+      )}
+      {deviceToRemove && (
+        <ConfirmDialog
+          title="移除这台设备？"
+          confirmLabel="移除设备"
+          onCancel={() => !busy && setDeviceToRemove(null)}
+          onConfirm={() => void removeDevice(deviceToRemove)}
+        >
+          “{deviceToRemove.name}”将从设备列表中移除，之后需要重新登录才能继续同步。
+        </ConfirmDialog>
       )}
     </div>
   );

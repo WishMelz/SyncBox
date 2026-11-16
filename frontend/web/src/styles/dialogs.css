@@ -1,0 +1,51 @@
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: #10251965;
+  backdrop-filter: blur(3px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  z-index: 40;
+}
+.modal-card {
+  background: white;
+  border-radius: 16px;
+  width: 100%;
+  max-width: 440px;
+  padding: 26px;
+  box-shadow: 0 25px 70px #10251925;
+}
+.modal-card h2 {
+  font-size: 18px;
+  font-weight: 600;
+}
+.device-list {
+  max-height: 60svh;
+  overflow: auto;
+  margin-top: 20px;
+}
+.device-list > div {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  border-bottom: 1px solid #eef1eb;
+  padding: 15px 0;
+}
+.device-list strong,
+.device-list small {
+  display: block;
+}
+.device-list strong {
+  font-size: 13px;
+}
+.device-list small,
+.device-list p {
+  font-size: 11px;
+  color: #85917c;
+  margin-top: 7px;
+}
+.device-list p {
+  line-height: 1.8;
+  margin-top: 20px;
+}

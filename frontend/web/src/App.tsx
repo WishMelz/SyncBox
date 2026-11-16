@@ -1,23 +1,61 @@
 import { cachedDeviceId, cacheDeviceId, deviceFingerprint } from '@/lib/device-identity';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { authApi, type Session } from '@/services/auth';
 import { devicesApi } from '@/services/devices';
 import { ApiError } from '@/services/api';
 import { LoginPage } from '@/pages/login-page';
 import { WorkspacePage } from '@/pages/workspace-page';
 const key = 'syncbox-session';
-export function App() {
-  const [session, setSession] = useState<Session | null>(() => {
+type SessionStorageKind = 'local' | 'session';
+
+function getStorage(kind: SessionStorageKind): Storage | null {
+  try {
+    return kind === 'local' ? localStorage : sessionStorage;
+  } catch {
+    return null;
+  }
+}
+
+function readStoredSession(): { session: Session | null; storage: SessionStorageKind } {
+  for (const kind of ['local', 'session'] as const) {
+    const storage = getStorage(kind);
+    if (!storage) continue;
     try {
-      return JSON.parse(sessionStorage.getItem(key) ?? 'null');
+      const value = storage.getItem(key);
+      if (value) return { session: JSON.parse(value) as Session, storage: kind };
     } catch {
-      return null;
+      try {
+        storage.removeItem(key);
+      } catch {
+        // Continue with the next storage fallback.
+      }
     }
-  });
+  }
+  return { session: null, storage: 'session' };
+}
+
+function storeSession(session: Session, storage: SessionStorageKind) {
+  const serialized = JSON.stringify(session);
+  const target = getStorage(storage);
+  let actual = storage;
+  try {
+    if (!target) throw new Error('storage unavailable');
+    target.setItem(key, serialized);
+  } catch {
+    getStorage('session')?.setItem(key, serialized);
+    actual = 'session';
+  }
+  getStorage(actual === 'local' ? 'session' : 'local')?.removeItem(key);
+}
+export function App() {
+  const [stored] = useState(readStoredSession);
+  const [session, setSession] = useState<Session | null>(stored.session);
+  const storageKind = useRef<SessionStorageKind>(stored.storage);
   const [checking, setChecking] = useState(!!session),
     [error, setError] = useState('');
   function clear() {
-    sessionStorage.removeItem(key);
+    getStorage('local')?.removeItem(key);
+    getStorage('session')?.removeItem(key);
     setSession(null);
     setChecking(false);
   }
@@ -53,7 +91,7 @@ export function App() {
     s = { ...s, user: { ...s.user, deviceId: device.id } };
     return s;
   }
-  async function login(s: Session) {
+  async function login(s: Session, remember: boolean) {
     let bound: Session;
     try {
       bound = await bindDevice(s);
@@ -61,7 +99,8 @@ export function App() {
       await authApi.logout(s.accessToken).catch(() => {});
       throw e;
     }
-    sessionStorage.setItem(key, JSON.stringify(bound));
+    storageKind.current = remember ? 'local' : 'session';
+    storeSession(bound, storageKind.current);
     setSession(bound);
     setChecking(false);
   }
@@ -77,7 +116,7 @@ export function App() {
           setSession((current) => {
             if (!current) return current;
             const next = { ...current, user: bound.user };
-            sessionStorage.setItem(key, JSON.stringify(next));
+            storeSession(next, storageKind.current);
             return next;
           });
           setChecking(false);

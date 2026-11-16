@@ -6,11 +6,13 @@ export function ConfirmDialog({
   children,
   onCancel,
   onConfirm,
+  confirmLabel = '确认删除',
 }: {
   title: string;
   children: ReactNode;
   onCancel: () => void;
   onConfirm: () => void;
+  confirmLabel?: string;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -40,7 +42,7 @@ export function ConfirmDialog({
           取消
         </Button>
         <Button variant="destructive" onClick={onConfirm}>
-          确认删除
+          {confirmLabel}
         </Button>
       </footer>
     </dialog>

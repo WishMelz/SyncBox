@@ -166,6 +166,17 @@ class ApiClient {
     return response.bodyBytes;
   }
 
+  Future<void> removeAttachment(String messageId, String attachmentId) async {
+    await request(
+      '/messages/$messageId/attachments/$attachmentId',
+      method: 'DELETE',
+    );
+  }
+
+  Future<void> removeImage(String messageId) async {
+    await request('/messages/$messageId/image', method: 'DELETE');
+  }
+
   Future<void> sendFiles(
     String conversationId,
     List<XFile> files,

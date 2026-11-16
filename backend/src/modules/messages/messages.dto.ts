@@ -39,6 +39,8 @@ export class ListFilesDto {
   @Type(() => Number) @IsInt() @Min(1) @Max(100) pageSize: number = 30;
   @IsOptional() @Transform(trim) @IsString() @MaxLength(200) q?: string;
   @IsOptional() @IsIn(['image', 'attachment']) kind?: 'image' | 'attachment';
+  @IsOptional() @IsIn(['newest', 'oldest', 'name', 'size']) sort?:
+    'newest' | 'oldest' | 'name' | 'size';
 }
 export class UpdateMessageDto {
   @ValidateIf((_object, value) => value !== undefined)

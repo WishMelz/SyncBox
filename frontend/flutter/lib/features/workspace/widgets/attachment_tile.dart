@@ -17,12 +17,14 @@ class AttachmentTile extends StatefulWidget {
     required this.message,
     required this.file,
     this.query = '',
+    this.onDelete,
     this.onContentSizeChanged,
   });
   final ApiClient api;
   final Message message;
   final Attachment file;
   final String query;
+  final VoidCallback? onDelete;
   final VoidCallback? onContentSizeChanged;
   @override
   State<AttachmentTile> createState() => _AttachmentTileState();
@@ -58,9 +60,8 @@ class _AttachmentTileState extends State<AttachmentTile> {
       }
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('文件保存失败，请重试。')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('文件保存失败，请重试。')));
       }
     } finally {
       if (mounted) setState(() => saving = false);
@@ -99,16 +100,29 @@ class _AttachmentTileState extends State<AttachmentTile> {
               ? '文件已清理'
               : '${(widget.file.size / 1024).toStringAsFixed(1)} KB',
         ),
-        trailing: IconButton(
-          tooltip: saving ? '保存中…' : '保存文件',
-          onPressed: widget.file.deleted || saving ? null : save,
-          icon: saving
-              ? const SizedBox(
-                  width: 18,
-                  height: 18,
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                )
-              : const Icon(Icons.download_outlined),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              tooltip: saving ? '保存中…' : '保存文件',
+              onPressed: widget.file.deleted || saving ? null : save,
+              icon: saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.download_outlined),
+            ),
+            if (widget.onDelete != null)
+              IconButton(
+                tooltip: '删除文件',
+                onPressed: widget.file.deleted || saving
+                    ? null
+                    : widget.onDelete,
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+              ),
+          ],
         ),
       ),
     ],

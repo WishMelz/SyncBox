@@ -1,0 +1,71 @@
+@media (max-width: 767px) {
+  .login-grid {
+    display: block;
+  }
+  .login-story {
+    padding: 25px;
+  }
+  .login-story > div:nth-child(2),
+  .privacy {
+    display: none;
+  }
+  .login-form {
+    padding: 40px 25px;
+  }
+  .conversation-pane {
+    width: 100%;
+    border: 0;
+  }
+  .mobile-hidden {
+    display: none;
+  }
+  .mobile-back {
+    display: grid;
+  }
+  .chat-header {
+    height: 52px;
+    padding: 0 14px;
+    gap: 9px;
+  }
+  .header-icon {
+    display: none;
+  }
+  .chat-header h2 {
+    font-size: 16px;
+  }
+  .chat-search {
+    padding: 14px 16px;
+  }
+  .chat-search .search-box {
+    flex: 1;
+  }
+  .message-feed {
+    padding: 0 16px 16px;
+  }
+  .message-card {
+    padding: 10px 12px;
+  }
+  .message-actions button {
+    width: 28px;
+    height: 28px;
+  }
+  .composer {
+    margin: 0 12px max(12px, env(safe-area-inset-bottom));
+    padding: 12px;
+  }
+  .composer span {
+    font-size: 9px;
+  }
+  .composer textarea {
+    min-height: 60px;
+  }
+  .workspace-brand {
+    padding: 24px;
+  }
+  .message-text {
+    font-size: 14px;
+  }
+  .chat-pane {
+    width: 100%;
+  }
+}

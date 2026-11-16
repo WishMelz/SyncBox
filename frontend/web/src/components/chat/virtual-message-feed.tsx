@@ -43,6 +43,7 @@ export function VirtualMessageFeed({
   onError,
   onAnnotate,
   onStar,
+  onEdit,
   onDelete,
 }: {
   messages: Message[];
@@ -59,6 +60,7 @@ export function VirtualMessageFeed({
   onError: (e: unknown) => void;
   onAnnotate: (message: Message) => void;
   onStar: (message: Message) => void;
+  onEdit: (message: Message, content: string) => Promise<void>;
   onDelete: (message: Message) => void;
 }) {
   const items = useMemo(() => [...messages].reverse(), [messages]);
@@ -185,6 +187,7 @@ export function VirtualMessageFeed({
               onError={onError}
               onAnnotate={() => onAnnotate(message)}
               onStar={() => onStar(message)}
+              onEdit={(content) => onEdit(message, content)}
               onDelete={() => onDelete(message)}
             />
           </div>

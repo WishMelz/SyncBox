@@ -300,6 +300,12 @@ export class MessagesService {
       args.push(term, term, term);
     }
     const where = clauses.join(' AND ');
+    const orderBy = {
+      newest: 'created_at DESC, file_id DESC',
+      oldest: 'created_at ASC, file_id ASC',
+      name: 'LOWER(name) ASC, created_at DESC, file_id DESC',
+      size: 'size DESC, created_at DESC, file_id DESC',
+    }[query.sort ?? 'newest'];
     const countRows: { total: number }[] = await this.db.query(
       `SELECT COUNT(*) AS total FROM ${union} WHERE ${where}`,
       args,
@@ -308,7 +314,7 @@ export class MessagesService {
       `SELECT file_id, message_id, kind, name, mime_type, size, has_preview, width, height,
         conversation_id, conversation_title, created_at
        FROM ${union} WHERE ${where}
-       ORDER BY created_at DESC, file_id DESC LIMIT ? OFFSET ?`,
+       ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
       [...args, query.pageSize, (query.page - 1) * query.pageSize],
     );
     const total = countRows[0]?.total ?? 0;
@@ -468,5 +474,67 @@ export class MessagesService {
   async remove(userId: string, id: string) {
     await this.detail(userId, id);
     await this.db.query('DELETE FROM messages WHERE id = ? AND user_id = ?', [id, userId]);
+  }
+  async removeAttachment(userId: string, messageId: string, attachmentId: string) {
+    let conversationId: string | undefined;
+    await this.db.transaction(async (manager) => {
+      const rows = await manager.query(
+        `SELECT m.content,m.conversation_id,a.name
+         FROM message_attachments a
+         JOIN messages m ON m.id=a.message_id AND m.user_id=?
+         WHERE a.id=? AND a.message_id=? AND a.deleted_at IS NULL`,
+        [userId, attachmentId, messageId],
+      );
+      if (!rows[0]) throw new NotFoundException('附件不存在');
+      conversationId = rows[0].conversation_id as string;
+      const names = await manager.query(
+        'SELECT id,name FROM message_attachments WHERE message_id=? AND deleted_at IS NULL ORDER BY position',
+        [messageId],
+      );
+      await manager.query('DELETE FROM message_attachments WHERE id=? AND message_id=?', [
+        attachmentId,
+        messageId,
+      ]);
+      const generated = `[附件] ${names.map((row: { name: string }) => row.name).join('、')}`;
+      const remaining = names
+        .filter((row: { id: string }) => row.id !== attachmentId)
+        .map((row: { name: string }) => row.name);
+      const nextContent =
+        rows[0].content === generated
+          ? remaining.length
+            ? `[附件] ${remaining.join('、')}`
+            : '[附件已删除]'
+          : rows[0].content;
+      await manager.query('UPDATE messages SET content=?,updated_at=? WHERE id=? AND user_id=?', [
+        nextContent,
+        new Date().toISOString(),
+        messageId,
+        userId,
+      ]);
+    });
+    return { conversationId };
+  }
+  async removeImage(userId: string, messageId: string) {
+    let conversationId: string | undefined;
+    await this.db.transaction(async (manager) => {
+      const rows = await manager.query(
+        `SELECT m.content,m.conversation_id
+         FROM message_images i
+         JOIN messages m ON m.id=i.message_id AND m.user_id=?
+         WHERE i.message_id=?`,
+        [userId, messageId],
+      );
+      if (!rows[0]) throw new NotFoundException('图片不存在');
+      conversationId = rows[0].conversation_id as string;
+      await manager.query('DELETE FROM message_images WHERE message_id=?', [messageId]);
+      const nextContent = rows[0].content === '[图片]' ? '[图片已删除]' : rows[0].content;
+      await manager.query('UPDATE messages SET content=?,updated_at=? WHERE id=? AND user_id=?', [
+        nextContent,
+        new Date().toISOString(),
+        messageId,
+        userId,
+      ]);
+    });
+    return { conversationId };
   }
 }

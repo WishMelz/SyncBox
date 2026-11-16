@@ -10,12 +10,21 @@ final class MessageHistory {
     var hasOlder = false
     var loadingOlder = false
     var olderError: String?
-    var positionID: String?
+    // Scroll position is reading memory, not rendered data. Keep the binding's
+    // value intact without invalidating the lazy message list on every gesture.
+    @ObservationIgnored var positionID: String?
     var atBottom = true
     private var tail: Task<Void, Never>?
     private let fetch: ([String: String]) async throws -> Page<Message>
 
     init(fetch: @escaping ([String: String]) async throws -> Page<Message>) { self.fetch = fetch }
+    func updateBottomDistance(_ distance: CGFloat) {
+        guard distance.isFinite else { return }
+        // Hysteresis prevents the button flickering near the boundary, including
+        // changes in estimated row heights and the scroll view's bottom bounce.
+        let next = distance <= (atBottom ? 96 : 48)
+        if next != atBottom { atBottom = next }
+    }
     static func cursor(_ message: Message) -> String { message.createdAt + "|" + message.id }
     static func merge(_ groups: [Message]...) -> [Message] {
         var unique: [String: Message] = [:]
@@ -60,6 +69,10 @@ final class MessageHistory {
             try await enqueue { [self] in
                 guard let oldest = page.items.last else { return }
                 let result = try await fetch(["before": Self.cursor(oldest)])
+                if result.hasMore == true,
+                   !result.items.contains(where: { Self.cursor($0) < Self.cursor(oldest) }) {
+                    throw APIError(message: "历史消息加载位置未前进，请重试。")
+                }
                 let items = Self.merge(page.items, result.items)
                 page = Page(items: items, page: 1, totalPages: result.totalPages, total: result.total)
                 hasOlder = result.hasMore ?? (result.total > items.count)

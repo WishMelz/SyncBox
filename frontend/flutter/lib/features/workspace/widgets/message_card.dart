@@ -17,6 +17,9 @@ class MessageCard extends StatefulWidget {
     this.onAnnotate,
     this.loadImage,
     this.onDelete,
+    this.onEdit,
+    this.onDeleteImage,
+    this.onDeleteAttachment,
     this.onOpen,
     this.api,
     this.own = false,
@@ -28,7 +31,13 @@ class MessageCard extends StatefulWidget {
   final bool own, showDate;
   final String query;
   final ApiClient? api;
-  final VoidCallback? onDelete, onOpen, onStar, onAnnotate;
+  final VoidCallback? onDelete,
+      onOpen,
+      onStar,
+      onAnnotate,
+      onEdit,
+      onDeleteImage;
+  final void Function(Attachment file)? onDeleteAttachment;
   final Future<Uint8List> Function()? loadImage;
   final VoidCallback? onContentSizeChanged;
   @override
@@ -58,6 +67,16 @@ class _MessageCardState extends State<MessageCard> {
       enabled: widget.onAnnotate != null,
       child: Text(widget.message.annotation.isEmpty ? '添加批注' : '编辑批注'),
     ),
+    if (widget.own &&
+        widget.message.attachments.isEmpty &&
+        !widget.message.hasImage &&
+        widget.onEdit != null)
+      const PopupMenuItem(value: 'edit', child: Text('编辑消息')),
+    if (widget.message.hasImage && widget.onDeleteImage != null)
+      const PopupMenuItem(
+        value: 'delete-image',
+        child: Text('删除图片', style: TextStyle(color: Colors.red)),
+      ),
     PopupMenuItem(
       value: 'delete',
       enabled: widget.onDelete != null,
@@ -84,6 +103,8 @@ class _MessageCardState extends State<MessageCard> {
     }
     if (action == 'star') widget.onStar?.call();
     if (action == 'annotate') widget.onAnnotate?.call();
+    if (action == 'edit') widget.onEdit?.call();
+    if (action == 'delete-image') widget.onDeleteImage?.call();
     if (action == 'delete') widget.onDelete?.call();
   }
 
@@ -219,6 +240,12 @@ class _MessageCardState extends State<MessageCard> {
                                       message: m,
                                       file: file,
                                       query: widget.query,
+                                      onDelete:
+                                          widget.onDeleteAttachment == null
+                                          ? null
+                                          : () => widget.onDeleteAttachment!(
+                                              file,
+                                            ),
                                       onContentSizeChanged:
                                           widget.onContentSizeChanged,
                                     ),

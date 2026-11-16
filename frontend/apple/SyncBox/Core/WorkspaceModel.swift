@@ -275,6 +275,50 @@ final class WorkspaceModel {
         catch { handle(error); return nil }
     }
 
+    func editMessage(_ message: Message, content: String) async throws {
+        let value = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, value.count <= 50_000 else { throw APIError(message: "消息正文需为 1–50,000 个字符") }
+        guard !mutating else { throw APIError(message: "请等待当前操作完成") }
+        mutating = true
+        defer { mutating = false }
+        do {
+            let _: Message = try await api.editMessage(message.id, content: value)
+            await refresh()
+            await loadFavorites()
+        } catch {
+            if (error as? APIError)?.status == 401 { onUnauthorized() }
+            throw error
+        }
+    }
+
+    func deleteAttachment(_ message: Message, file: Attachment) async throws {
+        guard !mutating else { throw APIError(message: "请等待当前操作完成") }
+        mutating = true
+        defer { mutating = false }
+        do {
+            try await api.removeAttachment(message.id, attachmentID: file.id)
+            await refresh()
+            await loadFavorites()
+        } catch {
+            if (error as? APIError)?.status == 401 { onUnauthorized() }
+            throw error
+        }
+    }
+
+    func deleteImage(_ message: Message) async throws {
+        guard !mutating else { throw APIError(message: "请等待当前操作完成") }
+        mutating = true
+        defer { mutating = false }
+        do {
+            try await api.removeImage(message.id)
+            await refresh()
+            await loadFavorites()
+        } catch {
+            if (error as? APIError)?.status == 401 { onUnauthorized() }
+            throw error
+        }
+    }
+
     func saveAnnotation(_ message: Message, text: String) async throws {
         let text = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard text.unicodeScalars.count <= 2000 else { throw APIError(message: "批注最多 2000 字") }

@@ -116,9 +116,8 @@ class _ConversationDetailState extends State<ConversationDetail> {
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('无法添加附件，请重试。')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('无法添加附件，请重试。')));
       }
     }
   }
@@ -149,10 +148,90 @@ class _ConversationDetailState extends State<ConversationDetail> {
       }
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('无法添加图片，请重试。')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('无法添加图片，请重试。')));
       }
+    }
+  }
+
+  Future<void> editMessage(BuildContext context, Message message) async {
+    final input = TextEditingController(text: message.content);
+    final value = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('编辑消息'),
+        content: TextField(
+          controller: input,
+          autofocus: true,
+          maxLines: 6,
+          maxLength: 50000,
+          decoration: const InputDecoration(hintText: '消息内容'),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              if (input.text.trim().isNotEmpty) {
+                Navigator.pop(dialogContext, input.text.trim());
+              }
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      ),
+    );
+    input.dispose();
+    if (value != null && mounted) {
+      await widget.controller.editMessage(message, value);
+    }
+  }
+
+  Future<void> deleteAttachment(Message message, Attachment file) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除这个文件？'),
+        content: Text('“${file.name}”会从消息和所有设备中移除，消息文字会保留。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('删除文件'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await widget.controller.deleteAttachment(message, file);
+    }
+  }
+
+  Future<void> deleteImage(Message message) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('删除这张图片？'),
+        content: const Text('图片会从消息和所有设备中移除，消息文字会保留。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('删除图片'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true && mounted) {
+      await widget.controller.deleteImage(message);
     }
   }
 
@@ -207,6 +286,19 @@ class _ConversationDetailState extends State<ConversationDetail> {
           onDelete: c.busy
               ? null
               : () => confirmDeleteMessage(context, c, message),
+          onEdit:
+              c.busy ||
+                  message.deviceId != c.currentDeviceId ||
+                  message.hasImage ||
+                  message.attachments.isNotEmpty
+              ? null
+              : () => editMessage(context, message),
+          onDeleteImage: c.busy || !message.hasImage
+              ? null
+              : () => deleteImage(message),
+          onDeleteAttachment: c.busy
+              ? null
+              : (file) => deleteAttachment(message, file),
           loadImage: () => c.repository.api.imageBytes(message.id),
           onAnnotate: c.busy
               ? null

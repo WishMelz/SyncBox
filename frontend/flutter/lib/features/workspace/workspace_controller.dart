@@ -473,6 +473,15 @@ class WorkspaceController extends ChangeNotifier {
     await _refreshAfterCurrent();
   }
 
+  Future<void> editMessage(Message message, String content) =>
+      _mutate(() => repository.editMessage(message, content));
+
+  Future<void> deleteAttachment(Message message, Attachment file) =>
+      _mutate(() => repository.deleteAttachment(message, file));
+
+  Future<void> deleteImage(Message message) =>
+      _mutate(() => repository.deleteImage(message));
+
   Future<void> pin(Conversation conversation) =>
       _mutate(() => repository.pin(conversation));
   Future<void> deleteMessage(Message message) =>

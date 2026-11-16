@@ -21,11 +21,22 @@ import { EventBus } from '../../events/events.service';
 @Controller('messages')
 @UseGuards(AuthGuard)
 export class MessagesController {
-  constructor(private readonly messages: MessagesService, private readonly events: EventBus) {}
+  constructor(
+    private readonly messages: MessagesService,
+    private readonly events: EventBus,
+  ) {}
   @Post() async create(@User() user: CurrentUser, @Body() dto: CreateMessageDto) {
     const result = await this.messages.create(user.id, dto, user.deviceId);
-    this.events.publish(user.id, { type: 'invalidate', scope: 'messages', conversationId: result.conversationId });
-    this.events.publish(user.id, { type: 'invalidate', scope: 'conversations', conversationId: result.conversationId });
+    this.events.publish(user.id, {
+      type: 'invalidate',
+      scope: 'messages',
+      conversationId: result.conversationId,
+    });
+    this.events.publish(user.id, {
+      type: 'invalidate',
+      scope: 'conversations',
+      conversationId: result.conversationId,
+    });
     return result;
   }
   @Get() list(@User() user: CurrentUser, @Query() query: ListMessagesDto) {
@@ -75,6 +86,42 @@ export class MessagesController {
       disposition: 'inline; filename="image.webp"',
     });
   }
+  @Delete(':id/attachments/:attachmentId')
+  @HttpCode(204)
+  async removeAttachment(
+    @User() user: CurrentUser,
+    @Param('id', new ParseUUIDPipe()) id: string,
+    @Param('attachmentId', new ParseUUIDPipe()) attachmentId: string,
+  ) {
+    const result = await this.messages.removeAttachment(user.id, id, attachmentId);
+    this.events.publish(user.id, {
+      type: 'invalidate',
+      scope: 'messages',
+      conversationId: result.conversationId,
+    });
+    this.events.publish(user.id, {
+      type: 'invalidate',
+      scope: 'conversations',
+      conversationId: result.conversationId,
+    });
+    this.events.publish(user.id, { type: 'invalidate', scope: 'favorites', messageId: id });
+  }
+  @Delete(':id/image')
+  @HttpCode(204)
+  async removeImage(@User() user: CurrentUser, @Param('id', new ParseUUIDPipe()) id: string) {
+    const result = await this.messages.removeImage(user.id, id);
+    this.events.publish(user.id, {
+      type: 'invalidate',
+      scope: 'messages',
+      conversationId: result.conversationId,
+    });
+    this.events.publish(user.id, {
+      type: 'invalidate',
+      scope: 'conversations',
+      conversationId: result.conversationId,
+    });
+    this.events.publish(user.id, { type: 'invalidate', scope: 'favorites', messageId: id });
+  }
 
   @Get(':id') detail(@User() user: CurrentUser, @Param('id', new ParseUUIDPipe()) id: string) {
     return this.messages.detail(user.id, id);
@@ -85,9 +132,19 @@ export class MessagesController {
     @Body() dto: UpdateMessageDto,
   ) {
     const result = await this.messages.update(user.id, id, dto);
-    this.events.publish(user.id, { type: 'invalidate', scope: dto.isStarred !== undefined ? 'favorites' : 'messages', messageId: id });
-    if (dto.isStarred !== undefined) this.events.publish(user.id, { type: 'invalidate', scope: 'messages', messageId: id });
-    if (dto.isRead !== undefined) this.events.publish(user.id, { type: 'invalidate', scope: 'conversations', conversationId: result.conversationId });
+    this.events.publish(user.id, {
+      type: 'invalidate',
+      scope: dto.isStarred !== undefined ? 'favorites' : 'messages',
+      messageId: id,
+    });
+    if (dto.isStarred !== undefined)
+      this.events.publish(user.id, { type: 'invalidate', scope: 'messages', messageId: id });
+    if (dto.isRead !== undefined)
+      this.events.publish(user.id, {
+        type: 'invalidate',
+        scope: 'conversations',
+        conversationId: result.conversationId,
+      });
     return result;
   }
   @Delete(':id') @HttpCode(204) async remove(
