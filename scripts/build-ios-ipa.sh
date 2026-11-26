@@ -26,7 +26,7 @@ case "$SIGNING_MODE" in
   *) echo 'IOS_SIGNING_MODE must be auto, signed, or unsigned.' >&2; exit 2 ;;
 esac
 if [[ "$SIGNING_MODE" == signed ]]; then
-  "$XCODEBUILD" archive -project "$APPLE/SyncBox.xcodeproj" -scheme SyncBox -configuration Release -destination 'generic/platform=iOS' -archivePath "$ARCHIVE" "${BUILD_ARGS[@]}"
+  "$XCODEBUILD" archive -project "$APPLE/SyncBox.xcodeproj" -scheme SyncBox -configuration Release -destination 'generic/platform=iOS' -archivePath "$ARCHIVE" ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"}
   EXPORT_PLIST="$WORK/ExportOptions.plist"
   cat > "$EXPORT_PLIST" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -41,13 +41,29 @@ PLIST
   cp "$WORK/export/SyncBox.ipa" "$OUT/SyncBox-iOS.ipa"
   echo "Signed IPA: $OUT/SyncBox-iOS.ipa"
 else
-  "$XCODEBUILD" archive -project "$APPLE/SyncBox.xcodeproj" -scheme SyncBox -configuration Release -destination 'generic/platform=iOS' -archivePath "$ARCHIVE" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO "${BUILD_ARGS[@]}"
+  "$XCODEBUILD" archive -project "$APPLE/SyncBox.xcodeproj" -scheme SyncBox -configuration Release -destination 'generic/platform=iOS' -archivePath "$ARCHIVE" CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO ${BUILD_ARGS[@]+"${BUILD_ARGS[@]}"}
   APP="$ARCHIVE/Products/Applications/SyncBox.app"
   test -d "$APP"
   mkdir -p "$WORK/package/Payload"
-  ditto "$APP" "$WORK/package/Payload/SyncBox.app"
-  (cd "$WORK/package" && COPYFILE_DISABLE=1 zip -qry "$WORK/SyncBox-iOS-unsigned.ipa" Payload)
+  bundle="$WORK/package/Payload/SyncBox.app"
+  ditto --norsrc --noextattr "$APP" "$bundle"
+  # A replaceable local signature, without a private certificate or profile.
+  codesign --force --sign - --timestamp=none "$bundle"
+  (cd "$WORK/package" && COPYFILE_DISABLE=1 zip -Xqry "$WORK/SyncBox-iOS-unsigned.ipa" Payload)
   unzip -tq "$WORK/SyncBox-iOS-unsigned.ipa"
+  unzip -q "$WORK/SyncBox-iOS-unsigned.ipa" -d "$WORK/check"
+  extracted="$WORK/check/Payload/SyncBox.app"
+  plutil -lint "$extracted/Info.plist"
+  executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$extracted/Info.plist")
+  bundle_id=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$extracted/Info.plist")
+  if [[ "$bundle_id" != cn.itsse.syncbox ]]; then
+    echo "Unexpected iOS bundle identifier: $bundle_id" >&2; exit 1
+  fi
+  test -x "$extracted/$executable"
+  test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleSupportedPlatforms:0' "$extracted/Info.plist")" = iPhoneOS
+  codesign --verify --strict "$extracted"
+  codesign --force --sign - --timestamp=none "$extracted"
+  codesign --verify --strict "$extracted"
   cp "$WORK/SyncBox-iOS-unsigned.ipa" "$OUT/SyncBox-iOS-unsigned.ipa"
   echo "Unsigned IPA (requires signing before installation): $OUT/SyncBox-iOS-unsigned.ipa"
 fi

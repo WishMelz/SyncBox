@@ -131,7 +131,7 @@ jobs:
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode.app
 
-      - name: Build unsigned iOS IPA
+      - name: Build and validate re-signable iOS IPA
         env:
           BUILD_NUMBER: ${{ github.run_number }}
           IOS_SIGNING_MODE: unsigned
@@ -139,8 +139,9 @@ jobs:
         run: |
           ./scripts/build-ios-ipa.sh
           mkdir -p release-assets
-          cp "$IOS_OUTPUT_DIR/SyncBox-iOS-unsigned.ipa" \
-            "release-assets/SyncBox-iOS-${{ github.ref_name }}-unsigned.ipa"
+          asset="release-assets/SyncBox-iOS-${{ github.ref_name }}-unsigned.ipa"
+          cp "$IOS_OUTPUT_DIR/SyncBox-iOS-unsigned.ipa" "$asset"
+          cmp "$IOS_OUTPUT_DIR/SyncBox-iOS-unsigned.ipa" "$asset"
 
       - name: Build unsigned macOS app
         env:

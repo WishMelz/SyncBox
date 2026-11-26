@@ -19,7 +19,7 @@
 open frontend/apple/SyncBox.xcodeproj
 ```
 
-在 Xcode 选择 `SyncBox` Scheme 和 `My Mac`、iPhone 或 iPad 模拟器，点击 Run。实际 iPhone/iPad 运行需要在 Signing & Capabilities 中选择自己的 Team，并按需要修改 bundle identifier（当前为 `com.theo.SyncBox`）。无需第三方 Swift 依赖。
+在 Xcode 选择 `SyncBox` Scheme 和 `My Mac`、iPhone 或 iPad 模拟器，点击 Run。实际 iPhone/iPad 运行需要在 Signing & Capabilities 中选择自己的 Team，并使用匹配 iOS 应用标识 `cn.itsse.syncbox` 的描述文件。无需第三方 Swift 依赖。
 
 先在项目根目录启动后端：
 
