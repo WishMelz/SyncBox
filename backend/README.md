@@ -46,13 +46,7 @@ npm start -w @syncbox/backend
 
 ## Docker
 
-从仓库根目录运行：
-
-```sh
-docker compose -f infra/docker/compose.yaml up --build -d
-```
-
-SQLite 存储在 `syncbox-data` 命名卷。Docker 构建会先编译 Web，再由同一个 NestJS 进程提供 API 和静态页面，访问 http://127.0.0.1:8080。部署时只需调整 `SYNCBOX_PORT`（例如 `SYNCBOX_PORT=16384 docker compose -f infra/docker/compose.yaml up --build -d`）。对外发布时应在入口配置 HTTPS。
+直接使用 Docker Hub 镜像 `wishmelz/syncbox:latest`，一个端口同时提供 Web 和 API。启动、端口设置和升级步骤见 [Docker 部署](../README.md#docker-部署)。对外发布时应在入口配置 HTTPS。
 
 ## 业务接口
 

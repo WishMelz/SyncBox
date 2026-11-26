@@ -31,7 +31,7 @@ npx shadcn@latest add dialog
 
 基础 Button、Card、Badge 源码来自 shadcn/ui 官方 new-york 注册表（https://ui.shadcn.com/r/styles/new-york/），配置保存在 `components.json`。
 
-生产可运行 `docker compose -f infra/docker/compose.yaml up --build -d`（仓库根目录），访问 http://127.0.0.1:8080。部署使用单个后端镜像，由 NestJS 同时提供 Web 静态资源和 `/api` 接口；可通过 `SYNCBOX_PORT` 调整宿主机端口。
+生产部署直接使用 Docker Hub 镜像 `wishmelz/syncbox:latest`，Web 页面与 `/api` 共用一个端口。见 [Docker 部署](../../README.md#docker-部署)。
 
 ## 会话工作空间
 

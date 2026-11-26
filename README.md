@@ -28,23 +28,28 @@ npm run check
 
 ## Docker 部署
 
-从仓库根目录构建并启动单个镜像：
+[Docker Hub 镜像 `wishmelz/syncbox`](https://hub.docker.com/r/wishmelz/syncbox) 已包含 Web 页面和后端。安装 Docker 后，直接运行，无需下载源码：
 
 ```sh
-docker build -t syncbox:latest .
-docker run -d --name syncbox \
+docker run -d --name syncbox --pull=always \
   -p 8080:3000 \
   -v syncbox-data:/app/backend/data \
-  syncbox:latest
+  wishmelz/syncbox:latest
 ```
 
-也可以使用 Compose，`SYNCBOX_PORT` 只调整宿主机端口：
+打开 `http://localhost:8080/`。其他设备使用 `http://服务器局域网IP:8080/`。要换端口，只改 `8080`，保留容器端口 `3000`。消息和附件保存在数据卷中。
+
+**使用 Docker Compose：** 将 [compose.yaml](infra/docker/compose.yaml) 单独保存到部署目录，在该目录运行：
 
 ```sh
-SYNCBOX_PORT=8080 docker compose -f infra/docker/compose.yaml up --build -d
+docker compose up -d --pull always
 ```
 
-访问 `http://127.0.0.1:8080/`，健康检查为 `/api/v1/health`。SQLite 数据保存在 `syncbox-data` 命名卷。
+更新时在原部署目录重复执行同一条命令即可。已有 Compose 部署请沿用原配置文件的位置和项目名，以便继续使用原数据卷。需要自定义端口时，在 Compose 文件旁的 `.env` 中设置 `SYNCBOX_PORT=16384`。
+
+## Windows 免安装版
+
+在 [GitHub Releases](https://github.com/WishMelz/SyncBox/releases) 下载名称含 `Windows-x64-Portable` 的 ZIP。完整解压到一个文件夹，双击其中的 `syncbox.exe` 启动。请保留同目录的 DLL 和 `data` 文件夹。
 
 ## 目录
 

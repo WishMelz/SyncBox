@@ -113,11 +113,22 @@ jobs:
           Compress-Archive -Path "build/windows/x64/runner/Release/*" `
             -DestinationPath "$env:GITHUB_WORKSPACE/release-assets/$asset" -Force
 
+      - name: Package and smoke-test portable Windows app
+        shell: pwsh
+        run: |
+          $zip = "release-assets/SyncBox-Windows-x64-Portable-${{ github.ref_name }}.zip"
+          ./scripts/package-windows-portable.ps1 -Source frontend/flutter/build/windows/x64/runner/Release -Destination $zip
+          $dir = Join-Path $env:RUNNER_TEMP 'SyncBox portable test'
+          Expand-Archive $zip $dir
+          $app = Start-Process (Join-Path $dir 'syncbox.exe') -WorkingDirectory $dir -PassThru
+          if ($app.WaitForExit(5000)) { throw "Portable app exited on startup: $($app.ExitCode)" }
+          Stop-Process -Id $app.Id
+
       - name: Upload Windows asset
         uses: actions/upload-artifact@v4
         with:
           name: release-windows
-          path: release-assets/SyncBox-Windows-${{ github.ref_name }}.zip
+          path: release-assets/SyncBox-Windows-*.zip
           if-no-files-found: error
 
   apple:
