@@ -424,7 +424,7 @@ class WorkspaceController extends ChangeNotifier {
     if (files.isNotEmpty) {
       await repository.api.sendFiles(
         id,
-        attempt.uploadFiles,
+        attempt.files,
         attempt.content,
         clientId,
       );
@@ -506,7 +506,7 @@ class _SendAttempt {
   final String clientId = generateInstallationId();
   final String content;
   final Uint8List? image;
-  final List<({String name, Uint8List bytes})> files;
+  final List<UploadFile> files;
 
   static Future<_SendAttempt> capture(
     String content,
@@ -517,9 +517,12 @@ class _SendAttempt {
     final captured = <({String name, Uint8List bytes})>[];
     var total = 0;
     for (final file in files) {
-      total += await file.length();
-      if (total > 20 * 1024 * 1024) throw const ApiException('附件合计不能超过 20 MB');
+      if (await file.length() > 20 * 1024 * 1024 - total) {
+        throw const ApiException('附件合计不能超过 20 MB');
+      }
       final bytes = await file.readAsBytes();
+      total += bytes.length;
+      if (total > 20 * 1024 * 1024) throw const ApiException('附件合计不能超过 20 MB');
       captured.add((name: file.name, bytes: bytes));
     }
     return _SendAttempt(
@@ -543,7 +546,4 @@ class _SendAttempt {
     }
     return true;
   }
-
-  List<XFile> get uploadFiles =>
-      files.map((file) => XFile.fromData(file.bytes, name: file.name)).toList();
 }

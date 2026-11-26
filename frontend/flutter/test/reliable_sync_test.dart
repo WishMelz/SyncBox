@@ -193,6 +193,10 @@ void main() {
           Uri.parse('https://example.com'),
           client: MockClient((r) async {
             if (r.method != 'POST') return http.Response(emptyPage, 200);
+            if (kind == 'files') {
+              expect(r.body, contains('["报告.txt"]'));
+              expect(r.body, contains('filename="报告.txt"'));
+            }
             ids.add(
               kind == 'text'
                   ? jsonDecode(r.body)['clientId'] as String
@@ -216,7 +220,7 @@ void main() {
         }
         if (kind == 'files') {
           c.attachFiles('one', [
-            XFile.fromData(Uint8List.fromList([1, 2, 3]), name: 'one.txt'),
+            XFile.fromData(Uint8List.fromList([1, 2, 3]), path: '报告.txt'),
           ]);
         }
         await c.send('original');
@@ -232,7 +236,7 @@ void main() {
         }
         if (kind == 'files') {
           c.attachFiles('one', [
-            XFile.fromData(Uint8List.fromList([1, 2, 3]), name: 'one.txt'),
+            XFile.fromData(Uint8List.fromList([1, 2, 3]), path: '报告.txt'),
           ]);
         }
         await c.send('edited');

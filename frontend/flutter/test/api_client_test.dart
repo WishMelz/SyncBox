@@ -3,7 +3,6 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:file_selector/file_selector.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:syncbox/core/network/api_client.dart';
@@ -112,7 +111,9 @@ void main() {
         }),
       )..token = 'token';
       try {
-        await api.sendFiles('conversation', [XFile(file.path)], '');
+        await api.sendFiles('conversation', [
+          (name: '报告.txt', bytes: await file.readAsBytes()),
+        ], '');
       } finally {
         api.close();
         await directory.delete(recursive: true);

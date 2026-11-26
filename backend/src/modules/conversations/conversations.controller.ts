@@ -20,7 +20,6 @@ import { MessagesService } from '../messages/messages.service';
 import { ListMessagesDto } from '../messages/messages.dto';
 import { ConversationsService } from './conversations.service';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
-import { Throttle } from '@nestjs/throttler';
 import { EventBus } from '../../events/events.service';
 import {
   ConversationDto,
@@ -80,7 +79,6 @@ export class ConversationsController {
     this.events.publish(u.id, { type: 'invalidate', scope: 'conversations', conversationId: id });
   }
   @Post(':id/attachments')
-  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @UseInterceptors(
     FilesInterceptor('files', 5, {
       limits: { fileSize: 20 * 1024 * 1024, files: 5, fields: 3, fieldSize: 200000, parts: 8 },
@@ -107,7 +105,6 @@ export class ConversationsController {
     return result;
   }
   @Post(':id/images')
-  @Throttle({ default: { limit: 20, ttl: 60000 } })
   @UseInterceptors(
     FileInterceptor('image', {
       limits: { fileSize: 8 * 1024 * 1024, files: 1, fields: 2, fieldSize: 200000 },

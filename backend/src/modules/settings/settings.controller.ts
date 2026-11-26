@@ -13,7 +13,6 @@ import {
 } from '@nestjs/common';
 import type { Response } from 'express';
 import { createReadStream, unlink } from 'node:fs';
-import { Throttle } from '@nestjs/throttler';
 import { AuthGuard, User, type AuthRequest } from '../auth/auth.guard';
 import type { CurrentUser } from '../auth/auth.service';
 import { CleanupDto, ResetDto, SecurityDto } from './settings.dto';
@@ -48,19 +47,16 @@ export class SettingsController {
     return result;
   }
   @Post('two-factor/setup')
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
   begin(@User() u: CurrentUser, @Req() req: AuthRequest, @Body() dto: SecurityDto) {
     return this.settings.beginTwoFactor(u.id, req.token, dto);
   }
   @Post('two-factor/enable')
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
   async enable(@User() u: CurrentUser, @Req() req: AuthRequest, @Body() dto: SecurityDto) {
     const result = await this.settings.enableTwoFactor(u.id, req.token, dto);
     this.events.publish(u.id, { type: 'invalidate', scope: 'settings' });
     return result;
   }
   @Post('two-factor/disable')
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
   async disable(@User() u: CurrentUser, @Req() req: AuthRequest, @Body() dto: SecurityDto) {
     const result = await this.settings.disableTwoFactor(u.id, req.token, dto);
     this.events.publish(u.id, { type: 'invalidate', scope: 'settings' });
@@ -68,7 +64,6 @@ export class SettingsController {
   }
   @Delete('data')
   @HttpCode(204)
-  @Throttle({ default: { limit: 5, ttl: 60000 } })
   async reset(@User() u: CurrentUser, @Body() dto: ResetDto) {
     const result = await this.settings.reset(u.id, dto);
     this.events.publish(u.id, { type: 'invalidate', scope: 'settings' });

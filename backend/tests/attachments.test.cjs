@@ -187,3 +187,26 @@ test('attachment limits and invalid manifests do not create partial messages', a
     .attach('files', Buffer.alloc(ATTACHMENT_LIMIT), 'exact-limit.bin')
     .expect(201);
 });
+
+test('authenticated upload and list bursts do not throttle; anonymous uploads still require login', async (t) => {
+  const app = await NestFactory.create(AppModule, new ExpressAdapter(), { logger: false });
+  t.after(() => app.close());
+  configureApp(app);
+  await app.init();
+  const api = request(app.getHttpServer());
+  const session = await api
+    .post('/api/v1/auth/setup')
+    .send({ username: 'burst-test', password: '123456' })
+    .expect(201);
+  const auth = { Authorization: `Bearer ${session.body.accessToken}` };
+  const list = '/api/v1/conversations';
+  const conversation = await api.post(list).set(auth).send({ title: 'Burst' }).expect(201);
+  const upload = `${list}/${conversation.body.id}/attachments`;
+  await api.post(upload).attach('files', Buffer.from('x'), 'test.txt').expect(401);
+  for (let i = 0; i < 22; i++) {
+    await api.post(upload).set(auth).attach('files', Buffer.from('x'), 'test.txt').expect(201);
+  }
+  for (let i = 0; i < 125; i++) await api.get(list).set(auth).expect(200);
+  for (let i = 0; i < 10; i++) await api.post('/api/v1/auth/login').send({}).expect(400);
+  await api.post('/api/v1/auth/login').send({}).expect(429);
+});
