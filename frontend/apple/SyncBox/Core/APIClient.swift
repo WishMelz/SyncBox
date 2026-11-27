@@ -199,7 +199,7 @@ private final class UploadProgressDelegate: NSObject, URLSessionTaskDelegate, @u
     }
 }
 
-final class APIClient: APITransport {
+final class APIClient: APITransport, @unchecked Sendable {
     let server: URL
     let mediaCache = MediaCache()
     var token: String? {
@@ -391,9 +391,10 @@ final class APIClient: APITransport {
             await onProgress(UploadProgress(loaded: 0, total: totalExpected))
         }
 
+        let uploadRequest = request
         let delegate = UploadProgressDelegate(totalExpectedFallback: totalExpected, onProgress: onProgress)
         let task = Task<(Data, URLResponse), Error> {
-            try await self.session.upload(for: request, fromFile: tempURL, delegate: delegate)
+            try await self.session.upload(for: uploadRequest, fromFile: tempURL, delegate: delegate)
         }
         uploadLock.withLock { activeUploadTask = task }
         defer {

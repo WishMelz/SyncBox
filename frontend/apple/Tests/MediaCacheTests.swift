@@ -4,18 +4,19 @@ import XCTest
 final class MediaCacheTests: XCTestCase {
     func testCostLimitEvictsAndIsolatesByServerAndToken() async throws {
         let cache = MediaCache(maxBytes: 10)
-        var fetches = 0
+        final class Counter: @unchecked Sendable { var value = 0 }
+        let fetches = Counter()
 
         let first = try await cache.getOrFetch(
             server: "https://a.example.com",
             token: "tok-1",
             path: "/messages/m1/image"
         ) {
-            fetches += 1
+            fetches.value += 1
             return Data([1, 2, 3, 4, 5, 6])
         }
         XCTAssertEqual(first.count, 6)
-        XCTAssertEqual(fetches, 1)
+        XCTAssertEqual(fetches.value, 1)
 
         // Same server + token + path hits cache.
         _ = try await cache.getOrFetch(
@@ -23,10 +24,10 @@ final class MediaCacheTests: XCTestCase {
             token: "tok-1",
             path: "/messages/m1/image"
         ) {
-            fetches += 1
+            fetches.value += 1
             return Data([9])
         }
-        XCTAssertEqual(fetches, 1)
+        XCTAssertEqual(fetches.value, 1)
 
         // Different token or server must not reuse cached entry.
         _ = try await cache.getOrFetch(
@@ -34,20 +35,20 @@ final class MediaCacheTests: XCTestCase {
             token: "tok-2",
             path: "/messages/m1/image"
         ) {
-            fetches += 1
+            fetches.value += 1
             return Data([1, 2])
         }
-        XCTAssertEqual(fetches, 2)
+        XCTAssertEqual(fetches.value, 2)
 
         _ = try await cache.getOrFetch(
             server: "https://b.example.com",
             token: "tok-1",
             path: "/messages/m1/image"
         ) {
-            fetches += 1
+            fetches.value += 1
             return Data([3, 4])
         }
-        XCTAssertEqual(fetches, 3)
+        XCTAssertEqual(fetches.value, 3)
 
         // Invalidate message evicts all server/token variants for that message.
         cache.invalidateMessage("m1")

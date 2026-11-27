@@ -92,17 +92,16 @@ class ApiClient {
     this.server, {
     http.Client? client,
     http.Client Function()? eventClientFactory,
-    http.Client Function()? uploadClientFactory,
+    this.uploadClientFactory,
   }) : _client = client ?? http.Client(),
        _usesCustomClient = client != null,
-       _eventClientFactory = eventClientFactory ?? http.Client.new,
-       _uploadClientFactory = uploadClientFactory;
+       _eventClientFactory = eventClientFactory ?? http.Client.new;
 
   final Uri server;
   final http.Client _client;
   final bool _usesCustomClient;
   final http.Client Function() _eventClientFactory;
-  final http.Client Function()? _uploadClientFactory;
+  final http.Client Function()? uploadClientFactory;
   final Set<SyncEventConnection> _eventConnections = {};
   final MemoryMediaCache mediaCache = MemoryMediaCache();
   String? _token;
@@ -294,7 +293,7 @@ class ApiClient {
     onProgress?.call(UploadProgress(loaded: 0, total: total));
     for (final file in files) {
       final stream = file.openRead().transform<List<int>>(
-        StreamTransformer.fromHandlers(
+        StreamTransformer<List<int>, List<int>>.fromHandlers(
           handleData: (chunk, sink) {
             if (cancelToken?.isCancelled == true) {
               sink.addError(const UploadCancelledException());
@@ -318,9 +317,9 @@ class ApiClient {
       );
     }
 
-    final ownsClient = _uploadClientFactory != null || !_usesCustomClient;
-    final uploadClient = _uploadClientFactory != null
-        ? _uploadClientFactory()
+    final ownsClient = uploadClientFactory != null || !_usesCustomClient;
+    final uploadClient = uploadClientFactory != null
+        ? uploadClientFactory!()
         : (ownsClient ? http.Client() : _client);
     cancelToken?._bind(uploadClient);
 

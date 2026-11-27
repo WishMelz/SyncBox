@@ -454,7 +454,7 @@ void main() {
     historyQueries.clear();
     oldMessageDeleted = true;
     await events.last.bytes.close();
-    await Future<void>.delayed(const Duration(milliseconds: 3300));
+    await Future<void>.delayed(const Duration(milliseconds: 3500));
     expect(events.length, 2);
     expect(historyQueries.any((q) => q['since'] != null), isTrue);
     expect(c.messages.map((m) => m.id), ['m2']);

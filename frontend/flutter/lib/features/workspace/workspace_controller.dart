@@ -78,14 +78,12 @@ class WorkspaceController extends ChangeNotifier {
   void setDevicesOpen(bool open) {
     if (devicesOpen == open) return;
     devicesOpen = open;
-    if (open) devicesRevision++;
     _notify();
   }
 
   void setSettingsOpen(bool open) {
     if (settingsOpen == open) return;
     settingsOpen = open;
-    if (open) settingsRevision++;
     _notify();
   }
 

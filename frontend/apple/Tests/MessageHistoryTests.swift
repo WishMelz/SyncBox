@@ -149,12 +149,12 @@ final class MessageHistoryTests: XCTestCase {
                 return decodedOmitted
             }
             return Page(
-                items: [message(3), message(2)],
+                items: [self.message(3), self.message(2)],
                 page: 1,
                 totalPages: 2,
                 total: 3,
                 hasMore: true,
-                nextCursor: MessageHistory.cursor(message(2))
+                nextCursor: MessageHistory.cursor(self.message(2))
             )
         }
         try await history.refreshLatest()
