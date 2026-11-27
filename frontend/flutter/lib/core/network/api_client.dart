@@ -292,23 +292,21 @@ class ApiClient {
     var loaded = 0;
     onProgress?.call(UploadProgress(loaded: 0, total: total));
     for (final file in files) {
-      final stream = file.openRead().transform<List<int>>(
-        StreamTransformer<List<int>, List<int>>.fromHandlers(
-          handleData: (chunk, sink) {
-            if (cancelToken?.isCancelled == true) {
-              sink.addError(const UploadCancelledException());
-              return;
-            }
-            loaded += chunk.length;
-            onProgress?.call(UploadProgress(loaded: loaded, total: total));
-            sink.add(chunk);
-          },
-        ),
-      );
+      Stream<List<int>> progressStream() async* {
+        await for (final chunk in file.openRead()) {
+          if (cancelToken?.isCancelled == true) {
+            throw const UploadCancelledException();
+          }
+          loaded += chunk.length;
+          onProgress?.call(UploadProgress(loaded: loaded, total: total));
+          yield chunk;
+        }
+      }
+
       request.files.add(
         http.MultipartFile(
           'files',
-          http.ByteStream(stream),
+          http.ByteStream(progressStream()),
           file.size,
           // Keep the multipart filename as a fallback for older servers. The
           // UTF-8 names field remains the canonical value.

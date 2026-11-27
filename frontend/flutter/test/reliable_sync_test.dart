@@ -470,7 +470,7 @@ void main() {
       Uri.parse('https://example.com'),
       client: MockClient((_) async => http.Response(emptyPage, 200)),
       uploadClientFactory: () => MockClient.streaming((request, bodyStream) async {
-        unawaited(bodyStream.drain<void>());
+        unawaited(bodyStream.drain<void>().catchError((_) {}));
         if (!started.isCompleted) started.complete();
         final res = await gate.future;
         return http.StreamedResponse(
