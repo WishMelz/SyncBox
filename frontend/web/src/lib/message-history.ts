@@ -5,6 +5,14 @@ export interface HistoryMessage {
 }
 export interface HistoryPage<T> {
   items: T[];
+  total?: number;
+  page: number;
+  totalPages?: number;
+  hasMore?: boolean;
+  nextCursor?: string | null;
+}
+export interface HistoryData<T> {
+  items: T[];
   total: number;
   page: number;
   totalPages: number;
@@ -21,7 +29,7 @@ export function mergeHistory<T extends HistoryMessage>(...groups: T[][]): T[] {
 }
 
 export interface HistoryState<T> {
-  data: HistoryPage<T>;
+  data: HistoryData<T>;
   ready: boolean;
   loading: boolean;
   loadingOlder: boolean;
@@ -45,9 +53,17 @@ export class MessageHistory<T extends HistoryMessage> {
   private refreshing: Promise<void> | null = null;
   private epoch = 0;
   private reloadLatest = false;
-  private fetchPage: (options: { before?: string; since?: string }) => Promise<HistoryPage<T>>;
+  private fetchPage: (options: {
+    before?: string;
+    since?: string;
+    includeTotal?: boolean;
+  }) => Promise<HistoryPage<T>>;
   constructor(
-    fetchPage: (options: { before?: string; since?: string }) => Promise<HistoryPage<T>>,
+    fetchPage: (options: {
+      before?: string;
+      since?: string;
+      includeTotal?: boolean;
+    }) => Promise<HistoryPage<T>>,
   ) {
     this.fetchPage = fetchPage;
   }
@@ -66,6 +82,9 @@ export class MessageHistory<T extends HistoryMessage> {
     this.queue = task.catch(() => undefined);
     return task;
   }
+  reconcile(): Promise<void> {
+    return this.refresh();
+  }
   refresh(): Promise<void> {
     if (this.refreshing) return this.refreshing;
     const epoch = this.epoch;
@@ -80,19 +99,23 @@ export class MessageHistory<T extends HistoryMessage> {
       while (since && page.hasMore && page.nextCursor) {
         if (cursors.has(page.nextCursor)) throw new Error('历史消息加载位置未前进，请重试。');
         cursors.add(page.nextCursor);
-        page = await this.fetchPage({ since, before: page.nextCursor });
+        page = await this.fetchPage({ since, before: page.nextCursor, includeTotal: false });
         items = mergeHistory(items, page.items);
       }
-      if (!items.length && page.total > 0 && since) {
+      const initialTotal = page.total ?? items.length;
+      if (!items.length && initialTotal > 0 && since) {
         page = await this.fetchPage({});
         items = page.items;
       }
       if (epoch !== this.epoch) return;
       this.reloadLatest = false;
+      const merged = mergeHistory(items);
+      const total = page.total ?? Math.max(merged.length, this.state.data.total);
+      const totalPages = page.totalPages ?? Math.ceil(total / 30);
       this.update({
-        data: { ...page, items: mergeHistory(items) },
+        data: { ...page, items: merged, total, totalPages },
         ready: true,
-        hasOlder: page.total > items.length,
+        hasOlder: total > merged.length,
         error: null,
       });
     })
@@ -107,6 +130,44 @@ export class MessageHistory<T extends HistoryMessage> {
     this.refreshing = task;
     return task;
   }
+  refreshLatest(): Promise<void> {
+    if (this.refreshing) return this.refreshing;
+    if (!this.state.ready || this.reloadLatest) return this.refresh();
+    const epoch = this.epoch;
+    const task = this.enqueue(async () => {
+      if (epoch !== this.epoch) return;
+      const page = await this.fetchPage({});
+      if (epoch !== this.epoch) return;
+      let items: T[];
+      const boundary = page.items.at(-1);
+      if (!page.hasMore || !boundary) {
+        items = mergeHistory(page.items);
+      } else {
+        const boundaryCursor = messageCursor(boundary);
+        const olderKept = this.state.data.items.filter(
+          (item) => messageCursor(item) < boundaryCursor,
+        );
+        items = mergeHistory(page.items, olderKept);
+      }
+      const total = page.total ?? items.length;
+      const totalPages = page.totalPages ?? Math.ceil(total / 30);
+      this.update({
+        data: { ...page, items, total, totalPages },
+        ready: true,
+        hasOlder: total > items.length,
+        error: null,
+      });
+    })
+      .catch((error: unknown) => {
+        if (epoch === this.epoch) this.update({ error });
+        throw error;
+      })
+      .finally(() => {
+        if (this.refreshing === task) this.refreshing = null;
+      });
+    this.refreshing = task;
+    return task;
+  }
   loadOlder(): Promise<void> {
     if (!this.state.ready || !this.state.hasOlder || this.state.loadingOlder)
       return Promise.resolve();
@@ -115,12 +176,17 @@ export class MessageHistory<T extends HistoryMessage> {
     return this.enqueue(async () => {
       if (epoch !== this.epoch) return;
       const oldest = this.state.data.items.at(-1);
-      const page = await this.fetchPage({ before: oldest && messageCursor(oldest) });
+      const page = await this.fetchPage({
+        before: oldest && messageCursor(oldest),
+        includeTotal: false,
+      });
       if (epoch !== this.epoch) return;
       const items = mergeHistory(this.state.data.items, page.items);
+      const total = page.total ?? Math.max(items.length, this.state.data.total);
+      const totalPages = page.totalPages ?? Math.ceil(total / 30);
       this.update({
-        data: { ...page, items },
-        hasOlder: page.hasMore ?? page.total > items.length,
+        data: { ...page, items, total, totalPages },
+        hasOlder: page.hasMore ?? total > items.length,
       });
     })
       .catch((olderError: unknown) => {
@@ -137,6 +203,26 @@ export class MessageHistory<T extends HistoryMessage> {
         ...this.state.data,
         items: this.state.data.items.map((m) => (m.id === message.id ? message : m)),
       },
+    });
+  }
+  upsertMessage(message: T) {
+    const existed = this.state.data.items.some((m) => m.id === message.id);
+    const items = mergeHistory(this.state.data.items, [message]);
+    const total = existed
+      ? Math.max(items.length, this.state.data.total)
+      : Math.max(items.length, this.state.data.total + 1);
+    this.update({
+      data: { ...this.state.data, items, total, totalPages: Math.ceil(total / 30) },
+      hasOlder: total > items.length,
+    });
+  }
+  removeMessage(id: string) {
+    if (!this.state.data.items.some((m) => m.id === id)) return;
+    const items = this.state.data.items.filter((m) => m.id !== id);
+    const total = Math.max(items.length, this.state.data.total - 1);
+    this.update({
+      data: { ...this.state.data, items, total, totalPages: Math.ceil(total / 30) },
+      hasOlder: total > items.length,
     });
   }
   sent(message: T) {

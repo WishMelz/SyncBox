@@ -37,7 +37,9 @@ struct FavoritesView: View {
             }.navigationTitle("收藏")
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
         }.frame(idealWidth: 650, idealHeight: 650)
-            .task { while !Task.isCancelled { await model.loadFavorites(); do { try await Task.sleep(for: .seconds(5)) } catch { return } } }
+            .onAppear { model.favoritesOpen = true }
+            .onDisappear { model.favoritesOpen = false }
+            .task { while !Task.isCancelled { await model.loadFavorites(); do { try await Task.sleep(for: .seconds(model.realtimeConnected ? 60 : 5)) } catch { return } } }
             .task(id: model.favoriteQuery) { do { try await Task.sleep(for: .milliseconds(350)) } catch { return }; model.favoritePage = 1; await model.loadFavorites() }
             .sheet(item: $annotating) { AnnotationEditor(message: $0, model: model) }
             .alert("删除这条消息？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {

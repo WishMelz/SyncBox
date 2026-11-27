@@ -18,8 +18,17 @@ class WorkspaceController extends ChangeNotifier {
   List<Conversation> conversations = [];
   List<Message> messages = [];
   bool favoritesMode = false;
+  bool filesMode = false;
+  bool devicesOpen = false;
+  bool settingsOpen = false;
+  int favoritesRevision = 0;
+  int filesRevision = 0;
+  int devicesRevision = 0;
+  int settingsRevision = 0;
   String? currentDeviceId;
   DateTime? lastSynced;
+  UploadProgress? uploadProgress;
+  UploadCancelToken? _uploadCancelToken;
   final Map<String, List<XFile>> fileDrafts = {};
   final Map<String, _SendAttempt> _sendAttempts = {};
   final Map<String, MessageHistory> _histories = {};
@@ -29,11 +38,12 @@ class WorkspaceController extends ChangeNotifier {
     final key = historyKey, id = selected?.id ?? '', query = messageSearch;
     if (!_histories.containsKey(key)) {
       _histories[key] = MessageHistory(
-        ({before, since}) => repository.messages(
+        ({before, since, includeTotal = true}) => repository.messages(
           id,
           search: query,
           before: before,
           since: since,
+          includeTotal: includeTotal,
         ),
       );
       if (_histories.length > 20) _histories.remove(_histories.keys.first);
@@ -42,7 +52,7 @@ class WorkspaceController extends ChangeNotifier {
   }
 
   Future<void> loadOlderMessages() async {
-    if (selected == null || favoritesMode) return;
+    if (selected == null || favoritesMode || filesMode) return;
     final key = historyKey, history = messageHistory;
     final work = history.loadOlder();
     _notify();
@@ -61,16 +71,49 @@ class WorkspaceController extends ChangeNotifier {
     _notify();
   }
 
+  void cancelUpload() {
+    _uploadCancelToken?.cancel();
+  }
+
+  void setDevicesOpen(bool open) {
+    if (devicesOpen == open) return;
+    devicesOpen = open;
+    if (open) devicesRevision++;
+    _notify();
+  }
+
+  void setSettingsOpen(bool open) {
+    if (settingsOpen == open) return;
+    settingsOpen = open;
+    if (open) settingsRevision++;
+    _notify();
+  }
+
   Future<void> showFavorites() async {
     _selectionVersion++;
     favoritesMode = true;
+    filesMode = false;
     selected = null;
     messages = [];
     messageSearch = '';
     messagePage = 1;
     messagePages = 0;
+    favoritesRevision++;
     _notify();
     await _refreshAfterCurrent();
+  }
+
+  Future<void> showFiles() async {
+    _selectionVersion++;
+    favoritesMode = false;
+    filesMode = true;
+    selected = null;
+    messages = [];
+    messageSearch = '';
+    messagePage = 1;
+    messagePages = 0;
+    filesRevision++;
+    _notify();
   }
 
   Future<void> openConversation(Message message) async {
@@ -102,13 +145,29 @@ class WorkspaceController extends ChangeNotifier {
   String? error;
   bool busy = false, refreshing = false, _disposed = false;
   int _selectionVersion = 0;
-  Timer? _timer, _reconnect, _eventRefresh;
+  Timer? _timer, _reconnect, _eventRefresh, _reconcileTimer;
   SyncEventConnection? _eventConnection;
   StreamSubscription<Map<String, dynamic>>? _eventSubscription;
   bool _eventsActive = false, realtimeConnected = false;
-  bool _refreshPending = false;
+  bool _pendingRefresh = false, _pendingRefreshReconcile = false;
+  bool _pendingEventBatch = false, _pendingEventReconcile = false;
+  final Set<String> _pendingScopes = {};
+  final Set<String> _pendingConversationIds = {};
+  final Map<String, Set<String>> _pendingMessageIdsByConversation = {};
+  final Set<String> _pendingWildcardMessageConversations = {};
+  bool _pendingHasGlobalWildcardMessage = false;
   int _eventGeneration = 0, _retrySeconds = 3;
   void start() => setActive(true);
+
+  void _clearPendingEvents() {
+    _pendingEventBatch = false;
+    _pendingEventReconcile = false;
+    _pendingScopes.clear();
+    _pendingConversationIds.clear();
+    _pendingMessageIdsByConversation.clear();
+    _pendingWildcardMessageConversations.clear();
+    _pendingHasGlobalWildcardMessage = false;
+  }
 
   void setActive(bool active) {
     if (_disposed || _eventsActive == active) return;
@@ -117,16 +176,23 @@ class WorkspaceController extends ChangeNotifier {
     _timer?.cancel();
     _reconnect?.cancel();
     _eventRefresh?.cancel();
+    _reconcileTimer?.cancel();
     unawaited(_eventSubscription?.cancel());
     _eventConnection?.close();
     _eventConnection = null;
     realtimeConnected = false;
-    _refreshPending = false;
+    _pendingRefresh = false;
+    _pendingRefreshReconcile = false;
+    _clearPendingEvents();
     if (active) {
       _retrySeconds = 3;
       _setPolling();
+      _reconcileTimer = Timer.periodic(
+        const Duration(minutes: 5),
+        (_) => unawaited(refresh(reconcile: true)),
+      );
       _connectEvents(_eventGeneration);
-      unawaited(refresh());
+      unawaited(refresh(reconcile: true));
     }
     _notify();
   }
@@ -136,7 +202,7 @@ class WorkspaceController extends ChangeNotifier {
     if (_eventsActive) {
       _timer = Timer.periodic(
         Duration(seconds: realtimeConnected ? 30 : 5),
-        (_) => refresh(),
+        (_) => unawaited(refresh(reconcile: false)),
       );
     }
   }
@@ -154,9 +220,9 @@ class WorkspaceController extends ChangeNotifier {
           _retrySeconds = 3;
           _setPolling();
           _notify();
-          _queueRefresh(); // Catch up changes made while disconnected.
+          _queueFullReconcile(); // Catch up changes made while disconnected.
         } else if (event['type'] == 'invalidate') {
-          _queueRefresh();
+          _recordInvalidation(event);
         }
       },
       onError: (Object e) {
@@ -181,14 +247,234 @@ class WorkspaceController extends ChangeNotifier {
     );
   }
 
-  void _queueRefresh() {
+  void _queueFullReconcile() {
     if (_disposed || !_eventsActive) return;
-    _refreshPending = true;
-    // Keep a single pending refresh even while a request or mutation is running.
+    _pendingEventBatch = true;
+    _pendingEventReconcile = true;
+    _scheduleEventFlush();
+  }
+
+  void _recordInvalidation(Map<String, dynamic> event) {
+    if (_disposed || !_eventsActive) return;
+    final scope = event['scope']?.toString();
+    if (scope == null || scope.isEmpty) {
+      _queueFullReconcile();
+      return;
+    }
+    _pendingEventBatch = true;
+    _pendingScopes.add(scope);
+    final conversationId = event['conversationId']?.toString();
+    if (conversationId != null && conversationId.isNotEmpty) {
+      _pendingConversationIds.add(conversationId);
+    }
+    if (scope == 'messages') {
+      if (conversationId != null && conversationId.isNotEmpty) {
+        final messageId = event['messageId']?.toString();
+        if (messageId != null && messageId.isNotEmpty) {
+          _pendingMessageIdsByConversation
+              .putIfAbsent(conversationId, () => <String>{})
+              .add(messageId);
+        } else {
+          _pendingWildcardMessageConversations.add(conversationId);
+        }
+      } else {
+        _pendingHasGlobalWildcardMessage = true;
+      }
+    }
+    _scheduleEventFlush();
+  }
+
+  void _scheduleEventFlush() {
+    if (_disposed || !_eventsActive) return;
+    // Keep a single pending flush even while a request or mutation is running.
     if (_eventRefresh?.isActive == true) return;
     _eventRefresh = Timer(const Duration(milliseconds: 150), () {
-      if (!_disposed && _eventsActive) unawaited(refresh());
+      if (!_disposed && _eventsActive) unawaited(_flushEvents());
     });
+  }
+
+  Future<void> _flushEvents() async {
+    if (_disposed || !_eventsActive) return;
+    if (refreshing || busy) return;
+    final runFullRefresh = _pendingRefresh || _pendingEventReconcile;
+    final runFullReconcile = _pendingRefreshReconcile || _pendingEventReconcile;
+    final scopes = Set<String>.from(_pendingScopes);
+    final conversationIds = Set<String>.from(_pendingConversationIds);
+    final messageIdsByConversation = <String, Set<String>>{
+      for (final entry in _pendingMessageIdsByConversation.entries)
+        entry.key: Set<String>.from(entry.value),
+    };
+    final wildcardMessageConversations = Set<String>.from(
+      _pendingWildcardMessageConversations,
+    );
+    final hasGlobalWildcardMessage = _pendingHasGlobalWildcardMessage;
+
+    _pendingRefresh = false;
+    _pendingRefreshReconcile = false;
+    _clearPendingEvents();
+
+    if (runFullRefresh) {
+      await refresh(reconcile: runFullReconcile);
+      return;
+    }
+    if (scopes.isEmpty) return;
+
+    final refreshConversations = scopes.contains('conversations');
+    final selectedId = selected?.id;
+    var historyAction = _HistorySyncAction.none;
+    List<String> fetchMessageIds = const [];
+
+    if (selectedId != null && !favoritesMode && !filesMode) {
+      final selectedConvInvalidated =
+          refreshConversations && conversationIds.contains(selectedId);
+      final hasWildcard =
+          hasGlobalWildcardMessage ||
+          wildcardMessageConversations.contains(selectedId);
+      final ids = messageIdsByConversation[selectedId];
+      if (hasWildcard || selectedConvInvalidated) {
+        historyAction = _HistorySyncAction.refreshLatest;
+      } else if (ids != null && ids.isNotEmpty) {
+        final historyReady = _histories[historyKey]?.ready == true;
+        if (messageSearch.isEmpty && historyReady && ids.length <= 3) {
+          historyAction = _HistorySyncAction.fetchMessages;
+          fetchMessageIds = ids.toList();
+        } else {
+          historyAction = _HistorySyncAction.refreshLatest;
+        }
+      }
+    }
+
+    final refreshFavorites = favoritesMode && scopes.contains('favorites');
+    final notifyFiles =
+        filesMode &&
+        (scopes.contains('messages') ||
+            scopes.contains('conversations') ||
+            scopes.contains('settings'));
+    final notifyDevices = devicesOpen && scopes.contains('devices');
+    final notifySettings = settingsOpen && scopes.contains('settings');
+
+    if (notifyFiles) filesRevision++;
+    if (notifyDevices) devicesRevision++;
+    if (notifySettings) settingsRevision++;
+
+    final needsNetwork =
+        refreshConversations ||
+        historyAction != _HistorySyncAction.none ||
+        refreshFavorites;
+
+    if (!needsNetwork) {
+      if (notifyFiles || notifyDevices || notifySettings) {
+        _notify();
+      }
+      return;
+    }
+
+    refreshing = true;
+    _notify();
+    final version = _selectionVersion,
+        id = selected?.id,
+        search = conversationSearch,
+        cp = conversationPage,
+        mp = messagePage,
+        mq = messageSearch;
+    try {
+      if (refreshConversations) {
+        final list = await repository.conversations(search: search, page: cp);
+        if (!_disposed &&
+            search == conversationSearch &&
+            cp == conversationPage) {
+          conversations = list.items;
+          conversationPages = list.totalPages;
+          if (cp > (list.totalPages < 1 ? 1 : list.totalPages)) {
+            conversationPage = list.totalPages < 1 ? 1 : list.totalPages;
+            scheduleMicrotask(_refreshAfterCurrent);
+          }
+          final updated = conversations
+              .where((c) => c.id == selected?.id)
+              .firstOrNull;
+          if (updated != null) selected = updated;
+        }
+      }
+
+      if (id != null && !favoritesMode && !filesMode) {
+        final window = messageHistory;
+        if (historyAction == _HistorySyncAction.fetchMessages) {
+          for (final messageId in fetchMessageIds) {
+            if (_disposed || version != _selectionVersion) break;
+            try {
+              final detail = await repository.messageDetail(messageId);
+              if (!_disposed &&
+                  version == _selectionVersion &&
+                  (detail.conversationId == null ||
+                      detail.conversationId == id)) {
+                window.upsertMessage(detail);
+              }
+            } on ApiException catch (e) {
+              if (e.status == 404) {
+                window.removeMessage(messageId);
+                repository.api.mediaCache.invalidateMessage(messageId);
+              } else {
+                rethrow;
+              }
+            }
+          }
+          if (!_disposed && version == _selectionVersion) {
+            messages = window.items;
+            messagePages = window.totalPages;
+            if (mq.isEmpty &&
+                mp == 1 &&
+                ((selected?.unreadCount ?? 0) > 0 ||
+                    window.items.any((m) => m.isRead == false))) {
+              await _markRead(id, version);
+            }
+          }
+        } else if (historyAction == _HistorySyncAction.refreshLatest) {
+          if (version == _selectionVersion) {
+            await window.refreshLatest();
+            if (!_disposed && version == _selectionVersion) {
+              messages = window.items;
+              messagePages = window.totalPages;
+              if (mq.isEmpty &&
+                  mp == 1 &&
+                  ((selected?.unreadCount ?? 0) > 0 ||
+                      window.items.any((m) => m.isRead == false))) {
+                await _markRead(id, version);
+              }
+            }
+          }
+        }
+      }
+
+      if (refreshFavorites && !_disposed && version == _selectionVersion) {
+        final history = await repository.favorites(search: mq, page: mp);
+        if (!_disposed && version == _selectionVersion) {
+          messages = history.items;
+          messagePages = history.totalPages;
+          favoritesRevision++;
+          if (mp > (history.totalPages < 1 ? 1 : history.totalPages)) {
+            messagePage = history.totalPages < 1 ? 1 : history.totalPages;
+            scheduleMicrotask(_refreshAfterCurrent);
+          }
+        }
+      }
+
+      if (!_disposed) {
+        error = null;
+        lastSynced = DateTime.now();
+      }
+    } catch (e) {
+      if (e is ApiException &&
+          e.status == 404 &&
+          version == _selectionVersion) {
+        selected = null;
+        messages = [];
+      }
+      await _handle(e);
+    } finally {
+      refreshing = false;
+      _notify();
+      if (_pendingRefresh || _pendingEventBatch) _scheduleEventFlush();
+    }
   }
 
   void _notify() {
@@ -206,13 +492,16 @@ class WorkspaceController extends ChangeNotifier {
     _notify();
   }
 
-  Future<void> refresh({String? failureMessage}) async {
+  Future<void> refresh({String? failureMessage, bool reconcile = true}) async {
     if (_disposed) return;
     if (refreshing || busy) {
-      _refreshPending = true;
+      _pendingRefresh = true;
+      if (reconcile) _pendingRefreshReconcile = true;
       return;
     }
-    _refreshPending = false;
+    _pendingRefresh = false;
+    _pendingRefreshReconcile = false;
+    if (reconcile) _clearPendingEvents();
     refreshing = true;
     _notify();
     final version = _selectionVersion,
@@ -221,7 +510,8 @@ class WorkspaceController extends ChangeNotifier {
         cp = conversationPage,
         mp = messagePage,
         mq = messageSearch,
-        starred = favoritesMode;
+        starred = favoritesMode,
+        files = filesMode;
     try {
       final list = await repository.conversations(search: search, page: cp);
       if (!_disposed &&
@@ -238,7 +528,7 @@ class WorkspaceController extends ChangeNotifier {
             .firstOrNull;
         if (updated != null) selected = updated;
       }
-      if (id != null || starred) {
+      if ((id != null || starred) && !files) {
         late final PageResult<Message> history;
         if (starred) {
           history = await repository.favorites(search: mq, page: mp);
@@ -246,7 +536,11 @@ class WorkspaceController extends ChangeNotifier {
           final window = messageHistory;
           // Capture the selected window before awaiting, then validate version below.
           if (version != _selectionVersion) return;
-          await window.refresh();
+          if (reconcile) {
+            await window.reconcile();
+          } else {
+            await window.refreshLatest();
+          }
           history = PageResult(window.items, 1, window.totalPages);
         }
         if (!_disposed && version == _selectionVersion) {
@@ -267,6 +561,9 @@ class WorkspaceController extends ChangeNotifier {
           }
         }
       }
+      if (files && reconcile && !_disposed && version == _selectionVersion) {
+        filesRevision++;
+      }
       if (!_disposed) {
         error = null;
         lastSynced = DateTime.now();
@@ -282,12 +579,13 @@ class WorkspaceController extends ChangeNotifier {
     } finally {
       refreshing = false;
       _notify();
-      if (_refreshPending) _queueRefresh();
+      if (_pendingRefresh || _pendingEventBatch) _scheduleEventFlush();
     }
   }
 
   Future<void> select(Conversation? conversation) async {
     favoritesMode = false;
+    filesMode = false;
     _selectionVersion++;
     selected = conversation;
     messageSearch = '';
@@ -300,7 +598,7 @@ class WorkspaceController extends ChangeNotifier {
     final version = _selectionVersion;
     try {
       final history = messageHistory;
-      await history.refresh();
+      await history.refreshLatest();
       final result = PageResult(history.items, 1, history.totalPages);
       if (!_disposed && version == _selectionVersion) {
         messages = result.items;
@@ -353,11 +651,16 @@ class WorkspaceController extends ChangeNotifier {
     await _refreshAfterCurrent();
   }
 
-  Future<void> _refreshAfterCurrent({String? failureMessage}) async {
+  Future<void> _refreshAfterCurrent({
+    String? failureMessage,
+    bool reconcile = false,
+  }) async {
     while (refreshing && !_disposed) {
       await Future<void>.delayed(const Duration(milliseconds: 30));
     }
-    if (!_disposed) await refresh(failureMessage: failureMessage);
+    if (!_disposed) {
+      await refresh(failureMessage: failureMessage, reconcile: reconcile);
+    }
   }
 
   Future<void> _mutate(
@@ -367,17 +670,20 @@ class WorkspaceController extends ChangeNotifier {
     if (busy) return;
     busy = true;
     error = null;
+    var cancelled = false;
     _notify();
     try {
       await work();
+    } on UploadCancelledException {
+      cancelled = true;
     } catch (e) {
       await _handle(e);
     } finally {
       busy = false;
       _notify();
-      if (_refreshPending) _queueRefresh();
+      if (_pendingRefresh || _pendingEventBatch) _scheduleEventFlush();
     }
-    if (error == null) {
+    if (error == null && !cancelled) {
       await _refreshAfterCurrent(failureMessage: refreshFailureMessage);
     }
   }
@@ -400,6 +706,7 @@ class WorkspaceController extends ChangeNotifier {
         final id = conversation?.id ?? selected?.id;
         if (id == null) return;
         await repository.remove(id);
+        repository.api.mediaCache.clear();
         drafts.remove(id);
         imageDrafts.remove(id);
         fileDrafts.remove(id);
@@ -422,12 +729,29 @@ class WorkspaceController extends ChangeNotifier {
     _sendAttempts[id] = attempt;
     final clientId = attempt.clientId;
     if (files.isNotEmpty) {
-      await repository.api.sendFiles(
-        id,
-        attempt.files,
-        attempt.content,
-        clientId,
-      );
+      final token = UploadCancelToken();
+      _uploadCancelToken = token;
+      uploadProgress = UploadProgress(loaded: 0, total: attempt.totalBytes);
+      _notify();
+      try {
+        await repository.api.sendFiles(
+          id,
+          attempt.files,
+          attempt.content,
+          clientId,
+          (progress) {
+            if (_disposed) return;
+            uploadProgress = progress;
+            _notify();
+          },
+          token,
+        );
+      } finally {
+        if (identical(_uploadCancelToken, token)) {
+          _uploadCancelToken = null;
+          uploadProgress = null;
+        }
+      }
     } else if (image != null) {
       await repository.api.sendImage(
         id,
@@ -468,7 +792,7 @@ class WorkspaceController extends ChangeNotifier {
     } finally {
       busy = false;
       _notify();
-      if (_refreshPending) _queueRefresh();
+      if (_pendingRefresh || _pendingEventBatch) _scheduleEventFlush();
     }
     await _refreshAfterCurrent();
   }
@@ -491,8 +815,10 @@ class WorkspaceController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _timer?.cancel();
+    _reconcileTimer?.cancel();
     _eventRefresh?.cancel();
     _reconnect?.cancel();
+    _uploadCancelToken?.cancel();
     unawaited(_eventSubscription?.cancel());
     _eventConnection?.close();
     _eventsActive = false;
@@ -501,12 +827,38 @@ class WorkspaceController extends ChangeNotifier {
   }
 }
 
+enum _HistorySyncAction { none, refreshLatest, fetchMessages }
+
+class _AttemptFile {
+  const _AttemptFile({
+    required this.name,
+    required this.path,
+    required this.size,
+    this.modified,
+    this.bytes,
+  });
+
+  final String name;
+  final String path;
+  final int size;
+  final DateTime? modified;
+  final Uint8List? bytes;
+}
+
 class _SendAttempt {
-  _SendAttempt(this.content, this.image, this.files);
+  _SendAttempt(
+    this.content,
+    this.image,
+    this.descriptors,
+    this.files,
+    this.totalBytes,
+  );
   final String clientId = generateInstallationId();
   final String content;
   final Uint8List? image;
+  final List<_AttemptFile> descriptors;
   final List<UploadFile> files;
+  final int totalBytes;
 
   static Future<_SendAttempt> capture(
     String content,
@@ -514,33 +866,71 @@ class _SendAttempt {
     List<XFile> files,
   ) async {
     if (files.length > 5) throw const ApiException('最多选择 5 个文件');
-    final captured = <({String name, Uint8List bytes})>[];
+    final descriptors = <_AttemptFile>[];
+    final uploadFiles = <UploadFile>[];
     var total = 0;
     for (final file in files) {
-      if (await file.length() > 20 * 1024 * 1024 - total) {
-        throw const ApiException('附件合计不能超过 20 MB');
+      if (file.path.isNotEmpty) {
+        final len = await file.length();
+        if (len == 0) throw const ApiException('不能发送空文件');
+        if (len > 20 * 1024 * 1024 - total) {
+          throw const ApiException('附件合计不能超过 20 MB');
+        }
+        total += len;
+        DateTime? modified;
+        try {
+          modified = await file.lastModified();
+        } catch (_) {}
+        descriptors.add(
+          _AttemptFile(
+            name: file.name,
+            path: file.path,
+            size: len,
+            modified: modified,
+          ),
+        );
+        uploadFiles.add(UploadFile.xfile(name: file.name, size: len, file: file));
+      } else {
+        final bytes = await file.readAsBytes();
+        if (bytes.isEmpty) throw const ApiException('不能发送空文件');
+        if (bytes.length > 20 * 1024 * 1024 - total) {
+          throw const ApiException('附件合计不能超过 20 MB');
+        }
+        total += bytes.length;
+        descriptors.add(
+          _AttemptFile(
+            name: file.name,
+            path: '',
+            size: bytes.length,
+            bytes: bytes,
+          ),
+        );
+        uploadFiles.add(UploadFile.bytes(name: file.name, bytes: bytes));
       }
-      final bytes = await file.readAsBytes();
-      total += bytes.length;
-      if (total > 20 * 1024 * 1024) throw const ApiException('附件合计不能超过 20 MB');
-      captured.add((name: file.name, bytes: bytes));
     }
     return _SendAttempt(
       content,
       image == null ? null : Uint8List.fromList(image),
-      captured,
+      descriptors,
+      uploadFiles,
+      total,
     );
   }
 
   bool matches(_SendAttempt other) {
     if (content != other.content ||
         !listEquals(image, other.image) ||
-        files.length != other.files.length) {
+        descriptors.length != other.descriptors.length) {
       return false;
     }
-    for (var i = 0; i < files.length; i++) {
-      if (files[i].name != other.files[i].name ||
-          !listEquals(files[i].bytes, other.files[i].bytes)) {
+    for (var i = 0; i < descriptors.length; i++) {
+      final a = descriptors[i];
+      final b = other.descriptors[i];
+      if (a.name != b.name ||
+          a.path != b.path ||
+          a.size != b.size ||
+          a.modified != b.modified ||
+          !listEquals(a.bytes, b.bytes)) {
         return false;
       }
     }

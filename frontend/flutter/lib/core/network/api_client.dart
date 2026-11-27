@@ -3,11 +3,65 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:http/http.dart' as http;
 
+import '../crypto/sha256.dart';
+import 'media_cache.dart';
 import 'sync_events.dart';
 
-typedef UploadFile = ({String name, Uint8List bytes});
+class UploadFile {
+  UploadFile.bytes({required this.name, required Uint8List bytes})
+    : size = bytes.length,
+      _bytes = bytes,
+      file = null;
+
+  const UploadFile.xfile({
+    required this.name,
+    required this.size,
+    required XFile this.file,
+  }) : _bytes = null;
+
+  final String name;
+  final int size;
+  final Uint8List? _bytes;
+  final XFile? file;
+
+  Stream<List<int>> openRead() {
+    if (file != null) return file!.openRead();
+    return Stream<List<int>>.value(_bytes ?? Uint8List(0));
+  }
+}
+
+class UploadProgress {
+  const UploadProgress({required this.loaded, required this.total});
+  final int loaded;
+  final int total;
+  int get percent =>
+      total <= 0 ? 100 : ((loaded * 100) ~/ total).clamp(0, 100);
+}
+
+class UploadCancelledException implements Exception {
+  const UploadCancelledException();
+  @override
+  String toString() => '已取消上传';
+}
+
+class UploadCancelToken {
+  bool _cancelled = false;
+  http.Client? _client;
+  bool get isCancelled => _cancelled;
+
+  void _bind(http.Client client) {
+    _client = client;
+    if (_cancelled) client.close();
+  }
+
+  void cancel() {
+    _cancelled = true;
+    _client?.close();
+  }
+}
 
 class ApiException implements Exception {
   const ApiException(this.message, [this.status, this.code]);
@@ -38,13 +92,29 @@ class ApiClient {
     this.server, {
     http.Client? client,
     http.Client Function()? eventClientFactory,
+    http.Client Function()? uploadClientFactory,
   }) : _client = client ?? http.Client(),
-       _eventClientFactory = eventClientFactory ?? http.Client.new;
+       _usesCustomClient = client != null,
+       _eventClientFactory = eventClientFactory ?? http.Client.new,
+       _uploadClientFactory = uploadClientFactory;
+
   final Uri server;
   final http.Client _client;
+  final bool _usesCustomClient;
   final http.Client Function() _eventClientFactory;
+  final http.Client Function()? _uploadClientFactory;
   final Set<SyncEventConnection> _eventConnections = {};
-  String? token;
+  final MemoryMediaCache mediaCache = MemoryMediaCache();
+  String? _token;
+
+  String? get token => _token;
+  set token(String? value) {
+    if (_token != value) {
+      mediaCache.clear();
+      _token = value;
+    }
+  }
+
   Future<dynamic> request(
     String path, {
     String method = 'GET',
@@ -105,18 +175,20 @@ class ApiClient {
     return connection;
   }
 
-  Future<Uint8List> imageBytes(String messageId) async {
-    final request = http.Request(
-      'GET',
-      server.replace(path: '/api/v1/messages/$messageId/image'),
-    )..followRedirects = false;
-    if (token != null) request.headers['Authorization'] = 'Bearer $token';
-    final response = await http.Response.fromStream(await _client.send(request))
-        .timeout(const Duration(seconds: 20));
-    if (response.statusCode != 200) {
-      throw ApiException('图片加载失败', response.statusCode);
-    }
-    return response.bodyBytes;
+  Future<Uint8List> imageBytes(String messageId) {
+    final path = '/messages/$messageId/image';
+    return mediaCache.getOrFetch(server, token, path, () async {
+      final request = http.Request('GET', server.replace(path: '/api/v1$path'))
+        ..followRedirects = false;
+      if (token != null) request.headers['Authorization'] = 'Bearer $token';
+      final response = await http.Response.fromStream(
+        await _client.send(request),
+      ).timeout(const Duration(seconds: 20));
+      if (response.statusCode != 200) {
+        throw ApiException('图片加载失败', response.statusCode);
+      }
+      return response.bodyBytes;
+    });
   }
 
   Future<void> sendImage(
@@ -135,8 +207,9 @@ class ApiClient {
     request.files.add(
       http.MultipartFile.fromBytes('image', bytes, filename: 'image'),
     );
-    final response = await http.Response.fromStream(await _client.send(request))
-        .timeout(const Duration(seconds: 30));
+    final response = await http.Response.fromStream(
+      await _client.send(request),
+    ).timeout(const Duration(seconds: 30));
     if (response.statusCode < 200 || response.statusCode >= 300) {
       dynamic message;
       try {
@@ -150,21 +223,26 @@ class ApiClient {
     String messageId,
     String attachmentId, {
     bool preview = false,
-  }) async {
-    final request = http.Request(
-      'GET',
-      server.replace(
-        path:
-            '/api/v1/messages/$messageId/attachments/$attachmentId${preview ? '/preview' : ''}',
-      ),
-    )..followRedirects = false;
-    if (token != null) request.headers['Authorization'] = 'Bearer $token';
-    final response = await http.Response.fromStream(await _client.send(request))
-        .timeout(const Duration(seconds: 120));
-    if (response.statusCode != 200) {
-      throw ApiException('文件读取失败或已被清理', response.statusCode);
+  }) {
+    final path =
+        '/messages/$messageId/attachments/$attachmentId${preview ? '/preview' : ''}';
+    Future<Uint8List> fetch() async {
+      final request = http.Request('GET', server.replace(path: '/api/v1$path'))
+        ..followRedirects = false;
+      if (token != null) request.headers['Authorization'] = 'Bearer $token';
+      final response = await http.Response.fromStream(
+        await _client.send(request),
+      ).timeout(const Duration(seconds: 120));
+      if (response.statusCode != 200) {
+        throw ApiException('文件读取失败或已被清理', response.statusCode);
+      }
+      return response.bodyBytes;
     }
-    return response.bodyBytes;
+
+    if (preview) {
+      return mediaCache.getOrFetch(server, token, path, fetch);
+    }
+    return fetch();
   }
 
   Future<void> removeAttachment(String messageId, String attachmentId) async {
@@ -172,10 +250,12 @@ class ApiClient {
       '/messages/$messageId/attachments/$attachmentId',
       method: 'DELETE',
     );
+    mediaCache.invalidatePath('/messages/$messageId/attachments/$attachmentId');
   }
 
   Future<void> removeImage(String messageId) async {
     await request('/messages/$messageId/image', method: 'DELETE');
+    mediaCache.invalidatePath('/messages/$messageId/image');
   }
 
   Future<void> sendFiles(
@@ -183,17 +263,24 @@ class ApiClient {
     List<UploadFile> files,
     String content, [
     String? clientId,
+    void Function(UploadProgress)? onProgress,
+    UploadCancelToken? cancelToken,
   ]) async {
     var total = 0;
     if (files.isEmpty || files.length > 5) {
       throw const ApiException('请选择 1–5 个文件');
     }
     for (final file in files) {
-      final size = file.bytes.length;
-      if (size == 0) throw const ApiException('不能发送空文件');
-      total += size;
+      if (file.size == 0) throw const ApiException('不能发送空文件');
+      total += file.size;
     }
-    if (total > 20 * 1024 * 1024) throw const ApiException('附件合计不能超过 20 MB');
+    if (total > 20 * 1024 * 1024) {
+      throw const ApiException('附件合计不能超过 20 MB');
+    }
+    if (cancelToken?.isCancelled == true) {
+      throw const UploadCancelledException();
+    }
+
     final request = http.MultipartRequest(
       'POST',
       server.replace(path: '/api/v1/conversations/$conversationId/attachments'),
@@ -202,25 +289,122 @@ class ApiClient {
     request.fields['content'] = content;
     if (clientId != null) request.fields['clientId'] = clientId;
     request.fields['names'] = jsonEncode(files.map((f) => f.name).toList());
+
+    var loaded = 0;
+    onProgress?.call(UploadProgress(loaded: 0, total: total));
     for (final file in files) {
+      final stream = file.openRead().transform<List<int>>(
+        StreamTransformer.fromHandlers(
+          handleData: (chunk, sink) {
+            if (cancelToken?.isCancelled == true) {
+              sink.addError(const UploadCancelledException());
+              return;
+            }
+            loaded += chunk.length;
+            onProgress?.call(UploadProgress(loaded: loaded, total: total));
+            sink.add(chunk);
+          },
+        ),
+      );
       request.files.add(
-        http.MultipartFile.fromBytes(
+        http.MultipartFile(
           'files',
-          file.bytes,
+          http.ByteStream(stream),
+          file.size,
           // Keep the multipart filename as a fallback for older servers. The
           // UTF-8 names field remains the canonical value.
           filename: file.name,
         ),
       );
     }
-    final response = await http.Response.fromStream(await _client.send(request))
-        .timeout(const Duration(seconds: 120));
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      dynamic message;
-      try {
-        message = (jsonDecode(response.body) as Map)['message'];
-      } catch (_) {}
-      throw ApiException(message?.toString() ?? '附件发送失败', response.statusCode);
+
+    final ownsClient = _uploadClientFactory != null || !_usesCustomClient;
+    final uploadClient = _uploadClientFactory != null
+        ? _uploadClientFactory()
+        : (ownsClient ? http.Client() : _client);
+    cancelToken?._bind(uploadClient);
+
+    try {
+      final response = await http.Response.fromStream(
+        await uploadClient.send(request),
+      ).timeout(const Duration(seconds: 120));
+      if (cancelToken?.isCancelled == true) {
+        throw const UploadCancelledException();
+      }
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        dynamic message;
+        try {
+          message = (jsonDecode(response.body) as Map)['message'];
+        } catch (_) {}
+        throw ApiException(message?.toString() ?? '附件发送失败', response.statusCode);
+      }
+    } on UploadCancelledException {
+      rethrow;
+    } on http.ClientException {
+      if (cancelToken?.isCancelled == true) {
+        throw const UploadCancelledException();
+      }
+      throw const ApiException('网络连接失败，请稍后重试');
+    } on TimeoutException {
+      throw const ApiException('上传超时，附件已保留');
+    } on SocketException {
+      if (cancelToken?.isCancelled == true) {
+        throw const UploadCancelledException();
+      }
+      throw const ApiException('无法连接服务，请检查网络');
+    } finally {
+      if (ownsClient) uploadClient.close();
+    }
+  }
+
+  Future<({Uint8List bytes, String sha256, String filename, int size})>
+  downloadBackup() async {
+    final request = http.Request(
+      'GET',
+      server.replace(path: '/api/v1/settings/backup'),
+    )..followRedirects = false;
+    request.headers['Accept'] = 'application/x-sqlite3';
+    if (token != null) request.headers['Authorization'] = 'Bearer $token';
+    try {
+      final response = await http.Response.fromStream(
+        await _client.send(request),
+      ).timeout(const Duration(seconds: 120));
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        dynamic message;
+        try {
+          message = (jsonDecode(utf8.decode(response.bodyBytes)) as Map)['message'];
+        } catch (_) {}
+        throw ApiException(
+          message?.toString() ?? '备份下载失败，请重试',
+          response.statusCode,
+        );
+      }
+      final expected = response.headers['x-syncbox-backup-sha256']
+          ?.toLowerCase();
+      if (expected == null || expected.isEmpty) {
+        throw const ApiException('备份缺少完整性校验信息，未保存文件');
+      }
+      final actual = sha256Hex(response.bodyBytes);
+      if (actual != expected) {
+        throw const ApiException('备份校验失败，未保存文件');
+      }
+      final disposition = response.headers['content-disposition'] ?? '';
+      final match = RegExp(r'filename="([^"]+)"').firstMatch(disposition);
+      final filename =
+          match?.group(1) ??
+          'syncbox-backup-${DateTime.now().toIso8601String().substring(0, 10)}.sqlite';
+      return (
+        bytes: response.bodyBytes,
+        sha256: actual,
+        filename: filename,
+        size: response.bodyBytes.length,
+      );
+    } on TimeoutException {
+      throw const ApiException('备份下载超时，请重试');
+    } on SocketException {
+      throw const ApiException('无法连接服务，请检查网络');
+    } on http.ClientException {
+      throw const ApiException('网络连接失败，请稍后重试');
     }
   }
 
@@ -228,6 +412,7 @@ class ApiClient {
     for (final connection in _eventConnections.toList()) {
       connection.close();
     }
+    mediaCache.clear();
     _client.close();
   }
 }

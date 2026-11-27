@@ -7,6 +7,8 @@ import { ApiError } from '@/services/api';
 export function FavoritesPanel({
   token,
   currentDeviceId,
+  sseHealthy = false,
+  syncRevision = 0,
   onAnnotate,
   annotationRevision,
   onClose,
@@ -15,6 +17,8 @@ export function FavoritesPanel({
 }: {
   token: string;
   currentDeviceId?: string | null;
+  sseHealthy?: boolean;
+  syncRevision?: number;
   onAnnotate: (message: Message) => void;
   annotationRevision: number;
   onClose: () => void;
@@ -34,6 +38,7 @@ export function FavoritesPanel({
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   const panel = useRef<HTMLElement>(null);
+  const lastFilterKey = useRef('');
   const expire = useRef(onExpired);
   expire.current = onExpired;
   useEffect(() => {
@@ -51,7 +56,10 @@ export function FavoritesPanel({
   useEffect(() => {
     let active = true,
       pending = false;
-    setLoading(true);
+    const filterKey = `${token}:${query}:${page}:${refresh}:${annotationRevision}`;
+    const foreground = lastFilterKey.current !== filterKey;
+    lastFilterKey.current = filterKey;
+    if (foreground) setLoading(true);
     setError('');
     async function load() {
       if (pending) return;
@@ -69,18 +77,26 @@ export function FavoritesPanel({
         }
       } finally {
         pending = false;
-        if (active) setLoading(false);
+        if (active && foreground) setLoading(false);
       }
     }
     void load();
-    const timer = setInterval(() => {
+    const timer = setInterval(
+      () => {
+        if (!document.hidden) void load();
+      },
+      sseHealthy ? 60_000 : 5_000,
+    );
+    const onVisible = () => {
       if (!document.hidden) void load();
-    }, 5000);
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
       active = false;
       clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [token, query, page, refresh, annotationRevision]);
+  }, [token, query, page, refresh, annotationRevision, syncRevision, sseHealthy]);
   async function change(work: () => Promise<unknown>) {
     if (busy) return;
     setBusy(true);

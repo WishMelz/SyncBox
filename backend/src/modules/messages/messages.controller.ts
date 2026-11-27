@@ -31,6 +31,7 @@ export class MessagesController {
       type: 'invalidate',
       scope: 'messages',
       conversationId: result.conversationId,
+      messageId: result.id,
     });
     this.events.publish(user.id, {
       type: 'invalidate',
@@ -98,13 +99,19 @@ export class MessagesController {
       type: 'invalidate',
       scope: 'messages',
       conversationId: result.conversationId,
+      messageId: id,
     });
     this.events.publish(user.id, {
       type: 'invalidate',
       scope: 'conversations',
       conversationId: result.conversationId,
     });
-    this.events.publish(user.id, { type: 'invalidate', scope: 'favorites', messageId: id });
+    this.events.publish(user.id, {
+      type: 'invalidate',
+      scope: 'favorites',
+      conversationId: result.conversationId,
+      messageId: id,
+    });
   }
   @Delete(':id/image')
   @HttpCode(204)
@@ -114,13 +121,19 @@ export class MessagesController {
       type: 'invalidate',
       scope: 'messages',
       conversationId: result.conversationId,
+      messageId: id,
     });
     this.events.publish(user.id, {
       type: 'invalidate',
       scope: 'conversations',
       conversationId: result.conversationId,
     });
-    this.events.publish(user.id, { type: 'invalidate', scope: 'favorites', messageId: id });
+    this.events.publish(user.id, {
+      type: 'invalidate',
+      scope: 'favorites',
+      conversationId: result.conversationId,
+      messageId: id,
+    });
   }
 
   @Get(':id') detail(@User() user: CurrentUser, @Param('id', new ParseUUIDPipe()) id: string) {
@@ -134,25 +147,48 @@ export class MessagesController {
     const result = await this.messages.update(user.id, id, dto);
     this.events.publish(user.id, {
       type: 'invalidate',
-      scope: dto.isStarred !== undefined ? 'favorites' : 'messages',
+      scope: 'messages',
+      conversationId: result.conversationId,
       messageId: id,
     });
-    if (dto.isStarred !== undefined)
-      this.events.publish(user.id, { type: 'invalidate', scope: 'messages', messageId: id });
-    if (dto.isRead !== undefined)
+    if (dto.isStarred !== undefined || result.isStarred) {
+      this.events.publish(user.id, {
+        type: 'invalidate',
+        scope: 'favorites',
+        conversationId: result.conversationId,
+        messageId: id,
+      });
+    }
+    if (dto.isRead !== undefined || dto.content !== undefined || dto.title !== undefined) {
       this.events.publish(user.id, {
         type: 'invalidate',
         scope: 'conversations',
         conversationId: result.conversationId,
       });
+    }
     return result;
   }
   @Delete(':id') @HttpCode(204) async remove(
     @User() user: CurrentUser,
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
-    await this.messages.remove(user.id, id);
-    this.events.publish(user.id, { type: 'invalidate', scope: 'messages', messageId: id });
-    this.events.publish(user.id, { type: 'invalidate', scope: 'favorites', messageId: id });
+    const result = await this.messages.remove(user.id, id);
+    this.events.publish(user.id, {
+      type: 'invalidate',
+      scope: 'messages',
+      conversationId: result.conversationId,
+      messageId: id,
+    });
+    this.events.publish(user.id, {
+      type: 'invalidate',
+      scope: 'conversations',
+      conversationId: result.conversationId,
+    });
+    this.events.publish(user.id, {
+      type: 'invalidate',
+      scope: 'favorites',
+      conversationId: result.conversationId,
+      messageId: id,
+    });
   }
 }

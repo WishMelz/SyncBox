@@ -2,12 +2,53 @@
   "openapi": "3.0.3",
   "info": {
     "title": "SyncBox API",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "description": "Same-account multi-device messaging. Bearer session tokens expire after 7 days. See docs/api/README.md for semantics."
   },
   "servers": [{ "url": "/api/v1" }],
   "security": [{ "bearerAuth": [] }],
   "paths": {
+    "/auth/status": {
+      "get": {
+        "operationId": "getSetupStatus",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Initialization status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["initialized"],
+                  "properties": { "initialized": { "type": "boolean" } }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/setup": {
+      "post": {
+        "operationId": "setup",
+        "responses": {
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Session" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "409": { "description": "Already initialized" },
+          "429": { "description": "Rate limited" }
+        },
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Setup" } } }
+        }
+      }
+    },
     "/auth/login": {
       "post": {
         "operationId": "login",
@@ -19,8 +60,8 @@
             }
           },
           "400": { "description": "Invalid input" },
-          "429": { "description": "Rate limited" },
-          "401": { "description": "Invalid credentials" }
+          "401": { "description": "Invalid credentials or TWO_FACTOR_REQUIRED" },
+          "429": { "description": "Rate limited" }
         },
         "security": [],
         "requestBody": {
@@ -39,7 +80,6 @@
               "application/json": { "schema": { "$ref": "#/components/schemas/User" } }
             }
           },
-          "400": { "description": "Invalid input" },
           "401": { "description": "Missing or expired session" }
         }
       }
@@ -48,8 +88,7 @@
       "post": {
         "operationId": "logout",
         "responses": {
-          "204": { "description": "Success" },
-          "400": { "description": "Invalid input" },
+          "204": { "description": "Success; revokes session and closes active SSE streams" },
           "401": { "description": "Missing or expired session" }
         }
       }
@@ -66,6 +105,7 @@
           },
           "400": { "description": "Invalid input" },
           "401": { "description": "Missing or expired session" },
+          "404": { "description": "Device ID not found" },
           "409": { "description": "指定设备 ID 已绑定不同安装标识或平台" }
         },
         "requestBody": {
@@ -89,7 +129,6 @@
               }
             }
           },
-          "400": { "description": "Invalid input" },
           "401": { "description": "Missing or expired session" }
         }
       }
@@ -98,16 +137,44 @@
       "post": {
         "operationId": "heartbeatDevice",
         "responses": {
-          "204": { "description": "Updated current device activity" },
+          "204": { "description": "Updated current device activity (throttled)" },
           "401": { "description": "Missing or expired session" }
         }
       }
     },
     "/devices/{id}": {
+      "patch": {
+        "operationId": "renameDevice",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string", "format": "uuid" }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/RenameDevice" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated device",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Device" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "401": { "description": "Missing or expired session" },
+          "404": { "description": "Not found or not owned by user" }
+        }
+      },
       "delete": {
         "operationId": "removeDevice",
         "responses": {
-          "204": { "description": "Success" },
+          "204": { "description": "Success; revokes device sessions and closes bound SSE streams" },
           "400": { "description": "Invalid input" },
           "401": { "description": "Missing or expired session" },
           "404": { "description": "Not found or not owned by user" }
@@ -185,6 +252,11 @@
             "name": "isStarred",
             "in": "query",
             "schema": { "type": "string", "enum": ["true", "false"] }
+          },
+          {
+            "name": "includeTotal",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["true", "false"], "default": "true" }
           }
         ]
       }
@@ -206,8 +278,103 @@
           { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1, "default": 1 } },
           { "name": "pageSize", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 30 } },
           { "name": "q", "in": "query", "schema": { "type": "string", "maxLength": 200 }, "description": "匹配文件名、所属会话或消息正文。" },
-          { "name": "kind", "in": "query", "schema": { "type": "string", "enum": ["image", "attachment"] } }
+          { "name": "kind", "in": "query", "schema": { "type": "string", "enum": ["image", "attachment"] } },
+          { "name": "category", "in": "query", "schema": { "type": "string", "enum": ["image", "file"] } },
+          { "name": "sort", "in": "query", "schema": { "type": "string", "enum": ["newest", "oldest", "name", "size"], "default": "newest" } }
         ]
+      }
+    },
+    "/messages/starred": {
+      "get": {
+        "operationId": "listStarredMessages",
+        "responses": {
+          "200": {
+            "description": "Paginated starred messages with full content",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ConversationMessageList" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "401": { "description": "Missing or expired session" }
+        },
+        "parameters": [
+          { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 1000000, "default": 1 } },
+          { "name": "pageSize", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 } },
+          { "name": "q", "in": "query", "schema": { "type": "string", "maxLength": 200 } }
+        ]
+      }
+    },
+    "/messages/{id}/attachments/{attachmentId}": {
+      "get": {
+        "operationId": "downloadAttachment",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "attachmentId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Original attachment bytes",
+            "content": { "application/octet-stream": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "401": { "description": "Missing or expired session" },
+          "404": { "description": "Not found or expired by cleanup" }
+        }
+      },
+      "delete": {
+        "operationId": "removeAttachment",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "attachmentId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "204": { "description": "Attachment removed while keeping message text" },
+          "401": { "description": "Missing or expired session" },
+          "404": { "description": "Not found or not owned by user" }
+        }
+      }
+    },
+    "/messages/{id}/attachments/{attachmentId}/preview": {
+      "get": {
+        "operationId": "previewAttachment",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } },
+          { "name": "attachmentId", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "WebP preview image",
+            "content": { "image/webp": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "401": { "description": "Missing or expired session" },
+          "404": { "description": "Preview unavailable or expired by cleanup" }
+        }
+      }
+    },
+    "/messages/{id}/image": {
+      "get": {
+        "operationId": "getMessageImage",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Legacy single-image message bytes",
+            "content": { "image/webp": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "401": { "description": "Missing or expired session" },
+          "404": { "description": "Image not found or expired by cleanup" }
+        }
+      },
+      "delete": {
+        "operationId": "removeMessageImage",
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string", "format": "uuid" } }
+        ],
+        "responses": {
+          "204": { "description": "Legacy image removed while keeping message text" },
+          "401": { "description": "Missing or expired session" },
+          "404": { "description": "Not found or not owned by user" }
+        }
       }
     },
     "/messages/{id}": {
@@ -279,6 +446,145 @@
         ]
       }
     },
+    "/settings": {
+      "get": {
+        "operationId": "getSettings",
+        "responses": {
+          "200": {
+            "description": "Cleanup, 2FA, and storage usage settings",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Settings" } }
+            }
+          },
+          "401": { "description": "Missing or expired session" }
+        }
+      }
+    },
+    "/settings/backup": {
+      "get": {
+        "operationId": "downloadBackup",
+        "description": "Creates and streams a consistent SQLite snapshot (VACUUM INTO) with SHA-256 verification headers. Rate limited and single-flight.",
+        "responses": {
+          "200": {
+            "description": "SQLite database snapshot",
+            "headers": {
+              "X-SyncBox-Backup-SHA256": { "schema": { "type": "string" } },
+              "X-SyncBox-Backup-Size": { "schema": { "type": "string" } },
+              "X-SyncBox-Backup-Created-At": { "schema": { "type": "string" } }
+            },
+            "content": { "application/x-sqlite3": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "401": { "description": "Missing or expired session" },
+          "429": { "description": "Rate limited or backup already in progress" }
+        }
+      }
+    },
+    "/settings/cleanup": {
+      "patch": {
+        "operationId": "updateCleanupSettings",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/CleanupInput" } }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated settings",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Settings" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "401": { "description": "Missing or expired session" }
+        }
+      }
+    },
+    "/settings/two-factor/setup": {
+      "post": {
+        "operationId": "beginTwoFactorSetup",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/SecurityInput" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Pending TOTP secret and otpauth URI",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/TwoFactorSetup" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "401": { "description": "Invalid password or missing session" },
+          "409": { "description": "Two-factor already enabled" },
+          "429": { "description": "Rate limited" }
+        }
+      }
+    },
+    "/settings/two-factor/enable": {
+      "post": {
+        "operationId": "enableTwoFactor",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/SecurityInput" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "2FA enabled; other sessions and SSE streams revoked",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/RecoveryCodes" } }
+            }
+          },
+          "400": { "description": "Invalid or expired setup / code" },
+          "401": { "description": "Invalid password or missing session" },
+          "409": { "description": "Two-factor already enabled" },
+          "429": { "description": "Rate limited" }
+        }
+      }
+    },
+    "/settings/two-factor/disable": {
+      "post": {
+        "operationId": "disableTwoFactor",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/SecurityInput" } }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "2FA disabled; other sessions and SSE streams revoked",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Settings" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "401": { "description": "Invalid credentials or missing session" },
+          "429": { "description": "Rate limited" }
+        }
+      }
+    },
+    "/settings/data": {
+      "delete": {
+        "operationId": "resetAllData",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": { "schema": { "$ref": "#/components/schemas/ResetInput" } }
+          }
+        },
+        "responses": {
+          "204": { "description": "All live user data deleted and SSE streams revoked" },
+          "400": { "description": "Invalid confirmation or input" },
+          "401": { "description": "Invalid credentials or missing session" },
+          "429": { "description": "Rate limited" }
+        }
+      }
+    },
     "/health": {
       "get": {
         "operationId": "getHealth",
@@ -299,7 +605,6 @@
               }
             }
           },
-          "400": { "description": "Invalid input" },
           "503": { "description": "Database unavailable" }
         },
         "security": []
@@ -309,9 +614,13 @@
       "get": {
         "operationId": "get_conversations",
         "responses": {
-          "200": { "description": "Success" },
-          "401": { "description": "Unauthorized" },
-          "404": { "description": "Not found or not owned" }
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/ConversationList" } }
+            }
+          },
+          "401": { "description": "Unauthorized" }
         },
         "parameters": [
           {
@@ -335,9 +644,14 @@
       "post": {
         "operationId": "post_conversations",
         "responses": {
-          "201": { "description": "Success" },
-          "401": { "description": "Unauthorized" },
-          "404": { "description": "Not found or not owned" }
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Conversation" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
+          "401": { "description": "Unauthorized" }
         },
         "requestBody": {
           "required": true,
@@ -358,7 +672,12 @@
       "get": {
         "operationId": "get_conversations_byId",
         "responses": {
-          "200": { "description": "Success" },
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Conversation" } }
+            }
+          },
           "401": { "description": "Unauthorized" },
           "404": { "description": "Not found or not owned" }
         },
@@ -374,7 +693,13 @@
       "patch": {
         "operationId": "patch_conversations_byId",
         "responses": {
-          "200": { "description": "Success" },
+          "200": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Conversation" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
           "401": { "description": "Unauthorized" },
           "404": { "description": "Not found or not owned" }
         },
@@ -448,6 +773,12 @@
             "schema": { "type": "string", "minLength": 1, "maxLength": 100 }
           },
           {
+            "name": "includeTotal",
+            "in": "query",
+            "description": "Set to false on cursor follow-up pages to omit COUNT(*) total/totalPages.",
+            "schema": { "type": "string", "enum": ["true", "false"], "default": "true" }
+          },
+          {
             "in": "path",
             "name": "id",
             "required": true,
@@ -474,7 +805,13 @@
       "post": {
         "operationId": "post_conversations_byId_messages",
         "responses": {
-          "201": { "description": "Success" },
+          "201": {
+            "description": "Success",
+            "content": {
+              "application/json": { "schema": { "$ref": "#/components/schemas/Message" } }
+            }
+          },
+          "400": { "description": "Invalid input" },
           "401": { "description": "Unauthorized" },
           "404": { "description": "Not found or not owned" }
         },
@@ -508,47 +845,6 @@
         }
       }
     },
-    "/auth/setup": {
-      "post": {
-        "operationId": "setup",
-        "responses": {
-          "201": {
-            "description": "Success",
-            "content": {
-              "application/json": { "schema": { "$ref": "#/components/schemas/Session" } }
-            }
-          },
-          "400": { "description": "Invalid input" },
-          "429": { "description": "Rate limited" },
-          "409": { "description": "Already initialized" }
-        },
-        "security": [],
-        "requestBody": {
-          "required": true,
-          "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Setup" } } }
-        }
-      }
-    },
-    "/auth/status": {
-      "get": {
-        "operationId": "getSetupStatus",
-        "security": [],
-        "responses": {
-          "200": {
-            "description": "Initialization status",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "required": ["initialized"],
-                  "properties": { "initialized": { "type": "boolean" } }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/conversations/{id}/read": {
       "patch": {
         "operationId": "markConversationRead",
@@ -572,7 +868,7 @@
       "get": {
         "operationId": "syncEvents",
         "summary": "Authenticated SSE invalidation stream",
-        "description": "Use Authorization Bearer; never put tokens in the URL. Frames use event: sync, with JSON containing type=invalidate, scope and optional resource IDs. Reconnect and reload because events are not replayed. A heartbeat comment is emitted every 20 seconds.",
+        "description": "Use Authorization Bearer; never put tokens in the URL. Streams bind to the session/device and close when revoked or expired. Frames use event: sync, with JSON containing type=invalidate, scope (conversations|messages|favorites|devices|settings), and optional conversationId/messageId. Reconnect and reconcile because events are not replayed. Heartbeat comments emit every 20 seconds and re-verify session + renew device presence every 60 seconds.",
         "responses": {
           "200": {
             "description": "Long-lived SSE stream",
@@ -689,7 +985,8 @@
         "type": "object",
         "properties": {
           "password": { "type": "string", "minLength": 6, "maxLength": 128 },
-          "username": { "type": "string", "minLength": 1, "maxLength": 254 }
+          "username": { "type": "string", "minLength": 1, "maxLength": 254 },
+          "code": { "type": "string", "minLength": 6, "maxLength": 40 }
         },
         "additionalProperties": false,
         "required": ["username", "password"]
@@ -765,6 +1062,14 @@
         "additionalProperties": false,
         "required": ["name", "platform"]
       },
+      "RenameDevice": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": { "type": "string", "minLength": 1, "maxLength": 80 }
+        }
+      },
       "Device": {
         "type": "object",
         "properties": {
@@ -798,6 +1103,32 @@
         "additionalProperties": false,
         "required": ["accessToken", "tokenType", "expiresIn", "user"]
       },
+      "Attachment": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "name", "mimeType", "size", "hasPreview"],
+        "properties": {
+          "id": { "type": "string", "format": "uuid" },
+          "name": { "type": "string" },
+          "mimeType": { "type": "string" },
+          "size": { "type": "integer", "minimum": 0 },
+          "hasPreview": { "type": "boolean" },
+          "width": { "type": "integer", "nullable": true },
+          "height": { "type": "integer", "nullable": true },
+          "deletedAt": { "type": "number", "nullable": true }
+        }
+      },
+      "MessageImageInfo": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mimeType", "width", "height", "size"],
+        "properties": {
+          "mimeType": { "type": "string" },
+          "width": { "type": "integer" },
+          "height": { "type": "integer" },
+          "size": { "type": "integer" }
+        }
+      },
       "Message": {
         "type": "object",
         "properties": {
@@ -809,6 +1140,15 @@
           "isStarred": { "type": "boolean" },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" },
+          "filesExpired": { "type": "boolean" },
+          "image": {
+            "allOf": [{ "$ref": "#/components/schemas/MessageImageInfo" }],
+            "nullable": true
+          },
+          "attachments": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Attachment" }
+          },
           "senderDevice": {
             "type": "object",
             "nullable": true,
@@ -827,6 +1167,7 @@
           },
           "conversationTitle": {
             "type": "string",
+            "nullable": true,
             "description": "消息所属会话的当前名称，用于收藏来源展示。"
           }
         },
@@ -854,6 +1195,17 @@
           "isStarred": { "type": "boolean" },
           "createdAt": { "type": "string" },
           "updatedAt": { "type": "string" },
+          "conversationId": { "type": "string", "format": "uuid" },
+          "conversationTitle": { "type": "string", "nullable": true },
+          "filesExpired": { "type": "boolean" },
+          "image": {
+            "allOf": [{ "$ref": "#/components/schemas/MessageImageInfo" }],
+            "nullable": true
+          },
+          "attachments": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Attachment" }
+          },
           "senderDevice": {
             "type": "object",
             "nullable": true,
@@ -901,16 +1253,29 @@
           }
         },
         "additionalProperties": false,
-        "required": ["items", "total", "page", "pageSize", "totalPages"]
+        "required": ["items", "page", "pageSize"]
       },
       "FileItem": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["id", "messageId", "kind", "name", "mimeType", "size", "hasPreview", "conversationId", "conversationTitle", "createdAt"],
+        "required": [
+          "id",
+          "messageId",
+          "kind",
+          "category",
+          "name",
+          "mimeType",
+          "size",
+          "hasPreview",
+          "conversationId",
+          "conversationTitle",
+          "createdAt"
+        ],
         "properties": {
           "id": { "type": "string", "format": "uuid" },
           "messageId": { "type": "string", "format": "uuid" },
           "kind": { "type": "string", "enum": ["image", "attachment"] },
+          "category": { "type": "string", "enum": ["image", "file"] },
           "name": { "type": "string" },
           "mimeType": { "type": "string" },
           "size": { "type": "integer", "minimum": 0 },
@@ -937,10 +1302,10 @@
       "ConversationMessageList": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["items", "total", "page", "pageSize", "totalPages", "hasMore", "nextCursor"],
+        "required": ["items", "page", "pageSize", "hasMore", "nextCursor"],
         "properties": {
           "items": { "type": "array", "items": { "$ref": "#/components/schemas/Message" } },
-          "total": { "type": "integer", "description": "满足搜索条件的总数，不受游标边界影响。" },
+          "total": { "type": "integer", "description": "满足搜索条件的总数，不受游标边界影响。当 includeTotal=false 时省略。" },
           "page": { "type": "integer" },
           "pageSize": { "type": "integer" },
           "totalPages": { "type": "integer" },
@@ -963,6 +1328,91 @@
             "description": "Unread messages shared by all devices of this account."
           },
           "isPinned": { "type": "boolean" }
+        }
+      },
+      "ConversationList": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["items", "total", "page", "pageSize", "totalPages"],
+        "properties": {
+          "items": { "type": "array", "items": { "$ref": "#/components/schemas/Conversation" } },
+          "total": { "type": "integer" },
+          "page": { "type": "integer" },
+          "pageSize": { "type": "integer" },
+          "totalPages": { "type": "integer" }
+        }
+      },
+      "Settings": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["cleanup", "twoFactorEnabled", "recoveryCodesRemaining", "storage"],
+        "properties": {
+          "cleanup": {
+            "type": "object",
+            "required": ["enabled", "idleDays", "lastRunAt", "lastDeletedCount"],
+            "properties": {
+              "enabled": { "type": "boolean" },
+              "idleDays": { "type": "integer", "minimum": 1, "maximum": 3650 },
+              "lastRunAt": { "type": "number", "nullable": true },
+              "lastDeletedCount": { "type": "integer", "minimum": 0 }
+            }
+          },
+          "twoFactorEnabled": { "type": "boolean" },
+          "recoveryCodesRemaining": { "type": "integer", "minimum": 0 },
+          "storage": {
+            "type": "object",
+            "required": ["fileCount", "bytes"],
+            "properties": {
+              "fileCount": { "type": "integer", "minimum": 0 },
+              "bytes": { "type": "integer", "minimum": 0 }
+            }
+          }
+        }
+      },
+      "CleanupInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["enabled", "idleDays"],
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "idleDays": { "type": "integer", "minimum": 1, "maximum": 3650 }
+        }
+      },
+      "SecurityInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["password"],
+        "properties": {
+          "password": { "type": "string", "minLength": 6, "maxLength": 128 },
+          "code": { "type": "string", "minLength": 6, "maxLength": 40 }
+        }
+      },
+      "ResetInput": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["password", "confirmation"],
+        "properties": {
+          "password": { "type": "string", "minLength": 6, "maxLength": 128 },
+          "code": { "type": "string", "minLength": 6, "maxLength": 40 },
+          "confirmation": { "type": "string", "enum": ["删除所有数据"] }
+        }
+      },
+      "TwoFactorSetup": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["secret", "otpauthUri", "expiresIn"],
+        "properties": {
+          "secret": { "type": "string" },
+          "otpauthUri": { "type": "string" },
+          "expiresIn": { "type": "integer" }
+        }
+      },
+      "RecoveryCodes": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["recoveryCodes"],
+        "properties": {
+          "recoveryCodes": { "type": "array", "items": { "type": "string" } }
         }
       },
       "Setup": {

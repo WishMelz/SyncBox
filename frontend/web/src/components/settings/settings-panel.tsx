@@ -12,6 +12,7 @@ type SecurityAction = 'enable' | 'disable' | 'reset' | null;
 export function SettingsPanel({
   token,
   deviceId,
+  syncRevision = 0,
   onDeviceRenamed,
   onClose,
   onShowDevices,
@@ -24,6 +25,7 @@ export function SettingsPanel({
 }: {
   token: string;
   deviceId?: string | null;
+  syncRevision?: number;
   onDeviceRenamed: (device: Device) => void;
   onClose: () => void;
   onShowDevices: () => void;
@@ -74,7 +76,7 @@ export function SettingsPanel({
   }
   useEffect(() => {
     void load();
-  }, [token]);
+  }, [token, syncRevision]);
   function start(next: SecurityAction) {
     setAction(next);
     setPassword('');

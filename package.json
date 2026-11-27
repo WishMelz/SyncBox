@@ -16,8 +16,9 @@
     "dev:web": "npm run dev -w @syncbox/web",
     "build": "npm run build --workspaces",
     "typecheck": "npm run typecheck --workspaces",
-    "test": "npm test -w @syncbox/backend",
-    "check": "npm run typecheck && npm test && npm run build",
+    "test": "npm test --workspaces",
+    "check:openapi": "node scripts/check-openapi-routes.mjs",
+    "check": "npm run typecheck && npm run check:openapi && npm test && npm run build",
     "format": "prettier --write backend/src backend/tests frontend/web/src frontend/web/vite.config.ts",
     "format:check": "prettier --check backend/src backend/tests frontend/web/src frontend/web/vite.config.ts"
   },

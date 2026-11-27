@@ -1,6 +1,6 @@
 # SyncBox API
 
-基础路径 `/api/v1`，JSON 请求与响应。Web 始终使用同域相对地址，由 Vite（开发）或 Nginx（生产）代理。
+基础路径 `/api/v1`，JSON 请求与响应；机器可读全量契约见 [shared/contracts/openapi.yaml](../../shared/contracts/openapi.yaml)（当前覆盖全部 41 个控制器路由，CI 通过 `npm run check:openapi` 强制对齐）。Web 始终使用同域相对地址，由 Vite（开发）或 Nginx（生产）代理。
 
 ## 账号与设备
 
@@ -8,20 +8,21 @@
 | --- | --- | --- |
 | GET | /auth/status | 返回 `{initialized}`，决定显示首次设置还是登录 |
 | POST | /auth/setup | 首次设置：`{username,password}`，仅允许成功一次，返回会话 |
-| POST | /auth/login | 登录：`{username,password}` |
+| POST | /auth/login | 登录：`{username,password,code?}` |
 | GET | /auth/me | 当前用户，包括当前会话绑定的 deviceId |
-| POST | /auth/logout | 撤销当前凭证，返回 204 |
-| POST | /devices | 登记并绑定当前会话：`{name,platform,id?}` |
+| POST | /auth/logout | 撤销当前凭证并关闭关联 SSE 连接，返回 204 |
+| POST | /devices | 登记并绑定当前会话：`{name,platform,installationId?,fingerprint?,identityMode?,id?}` |
 | GET | /devices | 当前账号设备列表 |
-| POST | /devices/heartbeat | 更新当前设备活动时间，返回 204 |
-| DELETE | /devices/:id | 移除设备并撤销该设备所有会话，返回 204 |
-| GET | /settings/backup | 下载当前 SQLite 一致性快照（需要 Bearer 鉴权） |
+| PATCH | /devices/:id | 修改当前账号下指定设备名称：`{name}` |
+| POST | /devices/heartbeat | 更新当前设备活动时间（经 `PresenceTracker` 30 s 节流），返回 204 |
+| DELETE | /devices/:id | 移除设备、销毁其会话并立即断开对应 SSE 连接，返回 204 |
+| GET | /settings/backup | 下载当前 SQLite 一致性快照（Bearer 鉴权 + 速率限制 + 单飞保护） |
 
 状态查询、首次设置和登录之外均需要 `Authorization: Bearer <accessToken>`。登录响应为 `{accessToken,tokenType:"Bearer",expiresIn:604800,user}`。凭证有效期 7 天，数据库只保存 SHA-256 摘要；密码使用随机盐 scrypt，不存明文。生产必须通过 HTTPS 访问，客户端应安全保存凭证；不提供默认账号。
 
-用户名去除首尾空白并转小写，1–254 字符，不允许内部空白或控制字符；密码 6–128 字符。设备 platform 为 `ios/ipados/macos/web/android/windows/linux/other`；首次登记不传 id，重新登录后可传之前登记的设备 id 重新绑定。设备 id 必须属于当前账号。删除设备保留已发送消息及设备名称快照。设备列表返回 `online` 和 `lastSeenAt`；最近 90 秒内有请求或心跳视为在线。客户端在前台定期调用心跳，进入后台后停止。
+用户名去除首尾空白并转小写，1–254 字符，不允许内部空白或控制字符；密码 6–128 字符。设备 platform 为 `ios/ipados/macos/web/android/windows/linux/other`；首次登记不传 id，重新登录后可传之前登记的设备 id 重新绑定。设备 id 必须属于当前账号。删除设备保留已发送消息及设备名称快照。设备列表返回 `online` 和 `lastSeenAt`；最近 90 秒内有请求、心跳或 SSE 心跳续期视为在线。服务端通过内存 `PresenceTracker` 对每个 `deviceId` 的 `devices.last_seen_at` 写入做 30 秒节流；`GET /events` 每 20 秒发送心跳时，每 3 次（约 60 秒）重新校验会话有效性并顺带续期在线状态（会话失效或被撤销则主动关闭流）。
 
-每个设备独立登录并登记后，使用 `POST /messages` 创建即发送到当前账号的共享消息列表。其他设备登录同一账号即可读取。工作台使用 `GET /events` 的 SSE 变化通知，并继续通过分页接口读取数据；断线时客户端回退到定时拉取。SSE 必须携带 `Authorization: Bearer <accessToken>`，事件只包含失效范围和资源 ID，不包含消息正文。未登记设备也允许发消息，senderDevice 为 null。已读和收藏在同一账号内共享。
+工作台使用 `GET /events` 的 SSE 实时失效通知，完整规则见 [同步事件影响矩阵](../architecture/sync-event-matrix.md)。SSE 必须携带 `Authorization: Bearer <accessToken>`，事件载荷仅包含 `scope`、`conversationId`、`messageId` 等元数据；三端按作用域 coalescing 路由（不相干会话触发 0 次历史请求），仅在 SSE 重连、切回前台或 5 分钟周期核对时执行区间全量核对。
 
 ## 消息
 
@@ -29,10 +30,13 @@
 | --- | --- | --- |
 | POST | /messages | 创建/发送消息 |
 | GET | /messages | 分页、搜索和筛选 |
-| GET | /messages/files | 集中分页查看图片和附件 |
+| GET | /messages/starred | 分页、搜索收藏消息 |
+| GET | /messages/files | 集中分页查看图片和附件（支持 `kind` / `category`） |
 | GET | /messages/:id | 消息详情（不会自动标记已读） |
-| PATCH | /messages/:id | 更新标题、正文、已读或收藏 |
-| DELETE | /messages/:id | 永久删除当前账号的消息，返回 204 |
+| PATCH | /messages/:id | 更新标题、正文、批注、已读或收藏 |
+| DELETE | /messages/:id | 永久删除当前账号的消息并发布 `messages`/`conversations`/`favorites` 事件，返回 204 |
+| DELETE | /messages/:id/image | 删除旧单图记录并发布更新事件，返回 204 |
+| DELETE | /messages/:id/attachments/:attachmentId | 删除单个附件并发布更新事件，返回 204 |
 
 发送请求：
 
@@ -64,7 +68,13 @@
 
 200 成功；201 创建；204 退出或删除；400 参数错误；401 未登录/凭证过期；404 不存在或不属于当前账号；409 初始化已完成；429 请求过频；503 健康检查发现数据库不可用。
 
-登录后的业务接口不限制请求频率。仅公开的首次设置和登录接口按 IP 限流：每分钟分别为 5 次和 10 次。限流存储在单进程内存，重启会清空。反向代理必须覆盖 X-Forwarded-For；仅在后端不能被直接访问且位于单层可信代理后时开启 TRUST_PROXY=true。
+一般读写业务接口不设全局严格配额。以下敏感入口启用了独立限流保护：
+
+- `POST /auth/setup`（每分钟 5 次/IP）与 `POST /auth/login`（每分钟 10 次/IP）。
+- `POST /settings/two-factor/setup|enable|disable` 与 `DELETE /settings/data`：使用 `@Throttle`（每分钟 10 次）并在内部叠加 `SecurityRateLimitService`（账号 ID 与客户端 IP 双维度 5 分钟窗口内最多 5 次失败）。
+- `GET /settings/backup`：使用 `@Throttle`（每分钟 3 次），并在数据库服务层实行单飞（single-flight）互斥保护，同一时间只允许生成 1 个快照（并发返回 429）。
+
+限流状态保存在单进程内存，重启清空。反向代理部署必须覆写 `X-Forwarded-For`（示例见 `infra/docker/nginx.proxy.conf`），并仅在受单层可信代理隔离时开启 `TRUST_PROXY=true`；直连暴露部署默认 `TRUST_PROXY=false`，不采信客户端伪造的 `X-Forwarded-For`。
 
 `GET /health` 无需登录，返回 `{status:"ok",service:"syncbox-backend",database:"up"}`。
 
@@ -104,15 +114,20 @@
 - 新迁移 `1794000000004-images` 创建 `message_images` 表，图片 BLOB 和消息同一事务写入 SQLite，消息/会话删除级联清理；已有文本消息保持兼容。备份整个 SQLite（包含 WAL 的一致性备份）即可包含图片，无额外目录或卷。
 - 消息详情和分页返回 `image` 元数据（文本为 null），不会在 JSON 中返回二进制。关键词搜索说明文字，不做 OCR。
 
-## 通用附件（Web 优先）
+## 文件中心与通用附件
 
-文件中心使用 `GET /messages/files?page=1&pageSize=30&kind=image|attachment&q=关键词`，返回当前账号下仍可访问的图片和附件元数据，并带所属会话及消息 ID。文件中心只加载元数据；预览和下载仍使用消息附件接口，点击来源可回到所属会话。闲置清理后已删除的文件不会出现在文件中心。
+文件中心使用 `GET /messages/files?page=1&pageSize=30&category=image|file&sort=newest|largest&q=关键词`（仍保留 `kind=image|attachment` 参数兼容），返回当前账号下仍可访问的图片和附件元数据，并带 `kind`（表示底层存储表来源，决定删除路由）与 `category`（`image` 表示旧图片表记录，或具有 WebP 预览的 `image/*` 新附件，其余为 `file`）。文件中心只加载元数据，点击查看详情或保存时按权限拉取二进制。
 
 | 方法 | 路径 | 用途 |
 | --- | --- | --- |
 | POST | /conversations/:id/attachments | 多附件及可选文字，一次创建一条消息 |
-| GET | /messages/:id/attachments/:attachmentId | 下载原始文件 |
-| GET | /messages/:id/attachments/:attachmentId/preview | 获取图片 WebP 预览；没有预览时返回 404 |
+| GET | /messages/:id/attachments/:attachmentId | 下载原始文件（`last_accessed_at` 按 1 小时节流刷新） |
+| GET | /messages/:id/attachments/:attachmentId/preview | 获取图片 WebP 预览（无预览返回 404，`last_accessed_at` 按 1 小时节流刷新） |
+| DELETE | /messages/:id/attachments/:attachmentId | 删除指定附件，保留消息文字并发布 SSE 事件 |
+
+上传入口受 `ContentLengthGuard` 早期校验（附件接口 20 MiB + 512 KiB、图片接口 8 MiB + 512 KiB，超限安全排空请求体后返回 413 避免 TCP 重置）；多图片并发生成 WebP 预览通过并发上限为 2 的信号量（`AsyncSemaphore(2)`）控制峰值内存。
+
+`GET /conversations/:id/messages` 支持 `includeTotal=false` 查询参数；客户端向后翻页加载更早消息（`before`）及补拉分页时传入 `includeTotal=false` 以跳过 `COUNT(*)` 全量统计，仅首屏/核对请求计算 `total` 与 `totalPages`。Web、Flutter 与 Apple 三端均已统一接入通用附件发送、进度/取消与文件中心。
 
 上传使用 `multipart/form-data`，重复文件字段 `files`（1–5 个），可选 `content`（最多 50,000 字）和 `names`（与文件顺序一致的 JSON 字符串数组，用于可靠传递中文等 Unicode 文件名）。每个文件非空，文件合计最多 20 MiB；超限返回 413，参数/数量错误返回 400；所有验证成功后才事务写入消息和附件。上传每个 IP 每分钟最多 20 次。
 
@@ -122,7 +137,7 @@
 
 实际可解码的 JPEG/PNG/WebP/GIF（最多 2400 万像素）会另生成最大 1600×1600 的 WebP 静态预览，GIF 预览取首帧；其他格式、过大或无法解码的图片仍可作为原文件下载。预览不修改原文件。文件名会去掉路径和控制字符，限制为 180 个 Unicode 字符。
 
-迁移 `1794000000005-attachments` 创建 SQLite `message_attachments` 表，原件和预览作为 BLOB 保存，随消息/会话级联删除。一致性备份整个数据库即可包含附件。文件名支持关键词搜索（转义 LIKE 特殊字符），不读取文件正文或 OCR。旧 `/images`、`/image` 接口不变，Apple/Flutter 通用附件 UI 留待后续接入。
+迁移 `1794000000005-attachments` 创建 SQLite `message_attachments` 表，原件和预览作为 BLOB 保存，随消息/会话级联删除。一致性备份整个数据库即可包含附件。文件名支持关键词搜索（转义 LIKE 特殊字符），不读取文件正文或 OCR。旧 `/images`、`/image` 接口继续保持兼容。
 
 ## 设置与数据管理
 
@@ -135,7 +150,7 @@
 | POST | /settings/two-factor/disable | `{password,code}` 验证后关闭两步认证 |
 | DELETE | /settings/data | `{password,code?,confirmation:"删除所有数据"}` 清空账号全部数据 |
 
-闲置清理默认关闭。开启后，后端每 10 分钟检查一次，按照文件最近一次上传、预览或下载时间计算，删除超过 `idleDays` 的图片和附件二进制；消息文字和会话保留，附件元数据会标记为已清理。查看消息列表不会刷新访问时间。SQLite 删除 BLOB 后会尝试回收空间；备份文件不受清理影响。
+闲置清理默认关闭。开启后，后端每 10 分钟检查一次，按照文件最近一次上传、预览或下载时间计算，删除超过 `idleDays` 的图片和附件二进制；消息文字和会话保留，附件元数据会标记为已清理，并向当前账号推送 `settings`、`favorites` 以及受影响会话的 `messages` / `conversations` 失效事件。查看消息列表不会刷新访问时间。SQLite 删除 BLOB 后按阈值策略紧缩（空闲页达到 ≥ 32 MiB，或 ≥ 8 MiB 且占比 ≥ 20% 时才执行 `VACUUM`，否则执行 `PRAGMA wal_checkpoint(PASSIVE)`）；备份文件不受清理影响。
 
 两步认证使用 RFC 6238 TOTP（30 秒、6 位、SHA-1）。绑定密钥只在开启流程中返回，后端使用密码派生密钥加密保存；开启成功生成 8 个一次性恢复码，服务端只保存哈希。开启或关闭会撤销其他设备会话，动态码和恢复码均防止重复使用。登录开启两步认证后，`POST /auth/login` 需要额外 `code` 字段；缺少时返回 401 和 `code: "TWO_FACTOR_REQUIRED"`。验证器设备时间应保持准确。
 

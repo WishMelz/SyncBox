@@ -88,9 +88,23 @@ struct ConversationDetailView: View {
                         ForEach(files) { file in HStack {
                             Label(file.name, systemImage: "paperclip").font(.caption).lineLimit(1)
                             Spacer()
-                            Button { model.fileDrafts[conversation.id]?.removeAll { $0.id == file.id } } label: { Label("移除附件", systemImage: "xmark") }.labelStyle(.iconOnly).disabled(model.sending)
+                            Button { model.removeFileDraft(file, for: conversation.id) } label: { Label("移除附件", systemImage: "xmark") }.labelStyle(.iconOnly).disabled(model.sending)
                         } }
                     } }.frame(maxHeight: 100)
+                }
+                if let progress = model.uploadProgress {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text("正在上传 (\(progress.percent)%)")
+                                .font(.caption)
+                                .foregroundStyle(ChatStyle.muted)
+                            Spacer()
+                            Button("取消上传") { model.cancelUpload() }
+                                .buttonStyle(.borderless)
+                                .font(.caption)
+                        }
+                        ProgressView(value: progress.fraction)
+                    }
                 }
                 HStack(alignment: .bottom, spacing: 10) {
                     Menu {
@@ -203,7 +217,7 @@ struct ConversationDetailView: View {
                 Menu {
                     Button(conversation.isPinned == true ? "取消置顶" : "置顶", systemImage: "pin") { Task { await model.togglePin(conversation) } }
                     Button("重命名", systemImage: "pencil", action: rename)
-                    Button("刷新消息", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
+                    Button("刷新消息", systemImage: "arrow.clockwise") { Task { await model.refresh(reconcile: true) } }
                     Button("删除会话", systemImage: "trash", role: .destructive, action: delete)
                 } label: { Label("会话操作", systemImage: "ellipsis.circle") }
                 #if os(macOS)
@@ -249,18 +263,31 @@ struct ConversationDetailView: View {
         guard model.imageDrafts[conversation.id] == nil else { throw APIError(message: "请先移除待发送的图片") }
         var files = model.fileDrafts[conversation.id] ?? []
         guard files.count + urls.count <= 5 else { throw APIError(message: "最多选择 5 个附件") }
-        for url in urls {
-            let accessed = url.startAccessingSecurityScopedResource()
-            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-            let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
-            guard values.isRegularFile == true else { throw APIError(message: "请选择文件，不能添加文件夹") }
-            let size = values.fileSize ?? 0
-            guard size > 0, size + files.reduce(0, { $0 + $1.data.count }) <= 20 * 1024 * 1024 else { throw APIError(message: "请选择非空文件，合计不超过 20 MB") }
-            let data = try Data(contentsOf: url)
-            guard !data.isEmpty, data.count + files.reduce(0, { $0 + $1.data.count }) <= 20 * 1024 * 1024 else { throw APIError(message: "附件合计不能超过 20 MB") }
-            files.append(PendingFile(name: url.lastPathComponent, data: data))
+        var staged: [PendingFile] = []
+        do {
+            for url in urls {
+                let accessed = url.startAccessingSecurityScopedResource()
+                defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+                let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+                guard values.isRegularFile == true else { throw APIError(message: "请选择文件，不能添加文件夹") }
+                let size = values.fileSize ?? 0
+                let totalSoFar = files.reduce(0, { $0 + $1.size })
+                guard size > 0, size + totalSoFar <= 20 * 1024 * 1024 else {
+                    throw APIError(message: "请选择非空文件，合计不超过 20 MB")
+                }
+                let tempURL = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("syncbox-draft-\(UUID().uuidString)-\(url.lastPathComponent)")
+                try FileManager.default.copyItem(at: url, to: tempURL)
+                try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tempURL.path)
+                let pending = PendingFile(name: url.lastPathComponent, size: size, fileURL: tempURL, ownsFile: true)
+                staged.append(pending)
+                files.append(pending)
+            }
+            model.fileDrafts[conversation.id] = files
+        } catch {
+            for file in staged { file.cleanup() }
+            throw error
         }
-        model.fileDrafts[conversation.id] = files
     }
 
     private var composerHint: String {
@@ -410,11 +437,11 @@ struct MessageCard: View {
                 .contentShape(RoundedRectangle(cornerRadius: 12))
                 #if os(macOS)
                 .overlay {
-                    MessageSecondaryClickMenu(actions: menuActions, disabled: model.mutating)
+                    MessageSecondaryClickMenu(actions: menuActions, disabled: model.isMutatingMessage(message.id))
                         .accessibilityHidden(true)
                 }
                 #else
-                .contextMenu { actions.disabled(model.mutating) }
+                .contextMenu { actions.disabled(model.isMutatingMessage(message.id)) }
                 #endif
                 // Anchor actions to the visible bubble, before the flexible row frame.
                 .overlay(alignment: own ? .leading : .trailing) {
@@ -426,7 +453,7 @@ struct MessageCard: View {
         }.onHover { hovered = $0 }
     }
     private var more: some View {
-        Menu { actions.disabled(model.mutating) } label: {
+        Menu { actions.disabled(model.isMutatingMessage(message.id)) } label: {
             Image(systemName: "ellipsis")
                 .frame(width: menuButtonSize.width, height: menuButtonSize.height)
         }

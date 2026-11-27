@@ -604,6 +604,36 @@ class _ConversationDetailState extends State<ConversationDetail> {
                   ],
                 ),
               ),
+            if (c.uploadProgress != null)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 2),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            '正在上传 (${c.uploadProgress!.percent}%)',
+                            style: Theme.of(context).textTheme.bodySmall,
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: c.cancelUpload,
+                          child: const Text('取消上传'),
+                        ),
+                      ],
+                    ),
+                    LinearProgressIndicator(
+                      value: c.uploadProgress!.total > 0
+                          ? (c.uploadProgress!.loaded /
+                                    c.uploadProgress!.total)
+                                .clamp(0.0, 1.0)
+                          : null,
+                    ),
+                  ],
+                ),
+              ),
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 6, 12, 12),
               child: Container(

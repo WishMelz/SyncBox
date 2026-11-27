@@ -105,9 +105,11 @@ final class MacDesktopController: NSObject, NSApplicationDelegate {
         syncingWorkspace = model
         model.startEvents()
         syncTask = Task { [weak model] in
+            var isFirstPass = true
             while !Task.isCancelled {
                 guard let model else { return }
-                await model.refresh()
+                await model.refresh(reconcile: isFirstPass)
+                isFirstPass = false
                 // SSE delivers changes immediately; this is only a fallback.
                 do { try await Task.sleep(for: .seconds(model.realtimeConnected ? 60 : 15)) }
                 catch { return }

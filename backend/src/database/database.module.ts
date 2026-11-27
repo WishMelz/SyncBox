@@ -1,6 +1,7 @@
 import { BrowserFingerprint1794000000010 } from './migrations/1794000000010-browser-fingerprint';
 import { MessageIdempotency1794000000011 } from './migrations/1794000000011-message-idempotency';
 import { MessageSearch1794000000012 } from './migrations/1794000000012-message-search';
+import { UnreadPartialIndex1794000000013 } from './migrations/1794000000013-unread-partial-index';
 import { DeviceIdentity1794000000009 } from './migrations/1794000000009-device-identity';
 import { Annotations1794000000008 } from './migrations/1794000000008-annotations';
 import { Pinned1794000000007 } from './migrations/1794000000007-pinned';
@@ -48,6 +49,7 @@ import { dirname, resolve } from 'node:path';
             BrowserFingerprint1794000000010,
             MessageIdempotency1794000000011,
             MessageSearch1794000000012,
+            UnreadPartialIndex1794000000013,
           ],
           migrationsRun: true,
           retryAttempts: 1,

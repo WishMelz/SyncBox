@@ -129,9 +129,51 @@ final class MessageHistoryTests: XCTestCase {
         XCTAssertFalse(history.hasOlder)
         XCTAssertEqual(Set(history.page.items.map(\.id)).count, 9)
         XCTAssertTrue(calls.contains { $0["since"] != nil && $0["before"] != nil })
+        XCTAssertTrue(calls.contains { $0["before"] != nil && $0["includeTotal"] == "false" })
         failed = true
         do { try await history.refresh(); XCTFail("Expected failure") } catch {}
         XCTAssertEqual(history.page.items.count, 9)
+    }
+    func testRefreshLatestUpsertRemoveAndOmittedTotals() async throws {
+        let omittedJSON = Data("{\"items\":[{\"id\":\"001\",\"content\":\"oldest\",\"createdAt\":\"2026-11-09T00:00:00.000Z\",\"isStarred\":false}],\"page\":1,\"hasMore\":false}".utf8)
+        let decodedOmitted = try JSONDecoder().decode(Page<Message>.self, from: omittedJSON)
+        XCTAssertFalse(decodedOmitted.hasTotal)
+        XCTAssertEqual(decodedOmitted.total, 0)
+        XCTAssertEqual(decodedOmitted.totalPages, 0)
+
+        var requests = [[String: String]]()
+        let history = MessageHistory { params in
+            requests.append(params)
+            if params["before"] != nil {
+                XCTAssertEqual(params["includeTotal"], "false")
+                return decodedOmitted
+            }
+            return Page(
+                items: [message(3), message(2)],
+                page: 1,
+                totalPages: 2,
+                total: 3,
+                hasMore: true,
+                nextCursor: MessageHistory.cursor(message(2))
+            )
+        }
+        try await history.refreshLatest()
+        try await history.loadOlder()
+        XCTAssertEqual(history.total, 3)
+        XCTAssertEqual(history.page.items.map(\.id), ["003", "002", "001"])
+        XCTAssertFalse(history.hasOlder)
+
+        requests.removeAll()
+        try await history.refreshLatest()
+        XCTAssertEqual(requests.count, 1)
+        XCTAssertEqual(history.page.items.map(\.id), ["003", "002", "001"])
+
+        history.upsertMessage(Message(id: "004", content: "new", createdAt: "2026-11-09T00:00:01.000Z", isStarred: false, senderDevice: nil))
+        XCTAssertEqual(history.page.items.map(\.id), ["004", "003", "002", "001"])
+        XCTAssertEqual(history.total, 4)
+        history.removeMessage("002")
+        XCTAssertEqual(history.page.items.map(\.id), ["004", "003", "001"])
+        XCTAssertEqual(history.total, 3)
     }
     func testConversationWindowsRetainHistoryAndReadingPosition() async {
         let api = MockAPI { _, _, _, _ in Data("{\"items\":[],\"page\":1,\"totalPages\":0,\"total\":0}".utf8) }

@@ -13,16 +13,33 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "syncbox/links").setMethodCallHandler { call, result ->
-            if (call.method != "open") { result.notImplemented(); return@setMethodCallHandler }
-            try {
-                val uri = Uri.parse(call.arguments as? String ?: "")
-                if (uri.scheme?.lowercase() !in listOf("http", "https") || uri.host.isNullOrEmpty()) {
-                    result.error("invalid", "无效链接", null)
-                } else {
-                    startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE))
-                    result.success(true)
+            when (call.method) {
+                "open" -> {
+                    try {
+                        val uri = Uri.parse(call.arguments as? String ?: "")
+                        if (uri.scheme?.lowercase() !in listOf("http", "https") || uri.host.isNullOrEmpty()) {
+                            result.error("invalid", "无效链接", null)
+                        } else {
+                            startActivity(Intent(Intent.ACTION_VIEW, uri).addCategory(Intent.CATEGORY_BROWSABLE))
+                            result.success(true)
+                        }
+                    } catch (e: Exception) { result.error("open", "无法打开链接", null) }
                 }
-            } catch (e: Exception) { result.error("open", "无法打开链接", null) }
+                "openOtpauth" -> {
+                    try {
+                        val uri = Uri.parse(call.arguments as? String ?: "")
+                        if (uri.scheme?.lowercase() != "otpauth") {
+                            result.error("invalid", "无效验证器链接", null)
+                        } else {
+                            startActivity(Intent(Intent.ACTION_VIEW, uri))
+                            result.success(true)
+                        }
+                    } catch (e: Exception) {
+                        result.error("unavailable", "未找到验证器应用", null)
+                    }
+                }
+                else -> result.notImplemented()
+            }
         }
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "syncbox/files").setMethodCallHandler { call, result ->
             if (call.method != "save") { result.notImplemented(); return@setMethodCallHandler }

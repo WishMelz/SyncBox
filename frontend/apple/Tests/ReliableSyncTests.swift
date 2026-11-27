@@ -18,6 +18,24 @@ final class StreamingURLProtocol: URLProtocol {
     override func stopLoading() { Self.stopped?() }
 }
 
+final class BackupAndUploadURLProtocol: URLProtocol {
+    static var handler: ((URLRequest) throws -> (Int, [String: String], Data))!
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        do {
+            let (status, headers, data) = try Self.handler(request)
+            let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: headers)!
+            client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+            client?.urlProtocol(self, didLoad: data)
+            client?.urlProtocolDidFinishLoading(self)
+        } catch {
+            client?.urlProtocol(self, didFailWithError: error)
+        }
+    }
+    override func stopLoading() {}
+}
+
 @MainActor
 final class ReliableSyncTests: XCTestCase {
     func testSSEUsesProtocolDispatchPreservesUTF8AndCancelsImmediately() async {
@@ -172,6 +190,146 @@ final class ReliableSyncTests: XCTestCase {
         XCTAssertEqual(sends, 1)
         await model.send()
         XCTAssertEqual(sends, 2, "Only an explicit send retries the draft")
+    }
+
+    func testScopedEventRoutingAvoidsUnrelatedHistoryAndPatchesSelectedMessage() async throws {
+        final class ScopedEventTransport: APITransport {
+            var continuation: AsyncThrowingStream<SyncEvent, Error>.Continuation?
+            var recorded: [String] = []
+            var messageContent = "initial"
+            var deleted = false
+
+            func events() -> AsyncThrowingStream<SyncEvent, Error> {
+                AsyncThrowingStream { cont in
+                    self.continuation = cont
+                    cont.yield(.init(type: "connected", scope: "all", conversationId: nil, messageId: nil, at: nil))
+                }
+            }
+
+            func request(_ path: String, method: String, query: [String: String], body: Data?, contentType: String) async throws -> Data {
+                recorded.append("\(method) \(path)")
+                if path == "/conversations" {
+                    return Data("{\"items\":[{\"id\":\"one\",\"title\":\"One\"}],\"page\":1,\"totalPages\":1,\"total\":1}".utf8)
+                }
+                if path == "/conversations/one/messages" {
+                    let payload = deleted
+                        ? "{\"items\":[],\"page\":1,\"totalPages\":0,\"total\":0}"
+                        : "{\"items\":[{\"id\":\"m1\",\"conversationId\":\"one\",\"content\":\"\(messageContent)\",\"createdAt\":\"2026-11-09T00:00:00.000Z\",\"isStarred\":false}],\"page\":1,\"totalPages\":1,\"total\":1}"
+                    return Data(payload.utf8)
+                }
+                if path == "/messages/m1" {
+                    if deleted { throw APIError(message: "not found", status: 404) }
+                    return Data("{\"id\":\"m1\",\"conversationId\":\"one\",\"content\":\"\(messageContent)\",\"createdAt\":\"2026-11-09T00:00:00.000Z\",\"isStarred\":false}".utf8)
+                }
+                return Data("{\"items\":[],\"page\":1,\"totalPages\":0,\"total\":0}".utf8)
+            }
+        }
+
+        let transport = ScopedEventTransport()
+        let model = WorkspaceModel(api: transport, onUnauthorized: {})
+        model.selected = .init(id: "one", title: "One", preview: nil, messageCount: 1)
+        await model.loadMessages(reconcile: true)
+        model.startEvents()
+        try await Task.sleep(for: .milliseconds(250))
+        defer { model.stopEvents() }
+        transport.recorded.removeAll()
+
+        // Unrelated conversation message invalidation triggers 0 requests.
+        transport.continuation?.yield(.init(type: "invalidate", scope: "messages", conversationId: "two", messageId: "m2", at: nil))
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertTrue(transport.recorded.isEmpty)
+
+        // Selected conversation messageId invalidation fetches only /messages/m1.
+        transport.messageContent = "patched"
+        transport.continuation?.yield(.init(type: "invalidate", scope: "messages", conversationId: "one", messageId: "m1", at: nil))
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(transport.recorded, ["GET /messages/m1"])
+        XCTAssertEqual(model.messages.items.first?.content, "patched")
+        transport.recorded.removeAll()
+
+        // 404 on /messages/m1 removes the message locally.
+        transport.deleted = true
+        transport.continuation?.yield(.init(type: "invalidate", scope: "messages", conversationId: "one", messageId: "m1", at: nil))
+        try await Task.sleep(for: .milliseconds(250))
+        XCTAssertEqual(transport.recorded, ["GET /messages/m1"])
+        XCTAssertTrue(model.messages.items.isEmpty)
+    }
+
+    func testFineGrainedMessageMutationLockDoesNotBlockOtherMessages() async throws {
+        var gate: CheckedContinuation<Data, Error>?
+        let api = MockAPI { _, method, _, _ in
+            if method == "PATCH" {
+                return try await withCheckedThrowingContinuation { gate = $0 }
+            }
+            return Data("{\"items\":[],\"page\":1,\"totalPages\":0,\"total\":0}".utf8)
+        }
+        let model = WorkspaceModel(api: api, onUnauthorized: {})
+        let m1 = Message(id: "m1", content: "one", createdAt: "2026-11-09T00:00:00.000Z", isStarred: false, senderDevice: nil)
+        let editTask = Task {
+            try await model.editMessage(m1, content: "edited")
+        }
+        while gate == nil { await Task.yield() }
+        XCTAssertTrue(model.isMutatingMessage("m1"))
+        XCTAssertFalse(model.isMutatingMessage("m2"))
+        XCTAssertTrue(model.mutating)
+
+        gate?.resume(returning: Data("{\"id\":\"m1\",\"content\":\"edited\",\"createdAt\":\"2026-11-09T00:00:00.000Z\",\"isStarred\":false}".utf8))
+        try await editTask.value
+        XCTAssertFalse(model.isMutatingMessage("m1"))
+        XCTAssertFalse(model.mutating)
+    }
+
+    func testDownloadBackupVerifiesSHA256AndProgressUploadStreamsFile() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [BackupAndUploadURLProtocol.self]
+        let api = APIClient(server: URL(string: "https://sync.example")!, session: URLSession(configuration: config))
+        api.token = "tok"
+
+        let expectedDigest = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        var sendHeader = expectedDigest
+        BackupAndUploadURLProtocol.handler = { _ in
+            (
+                200,
+                [
+                    "Content-Type": "application/x-sqlite3",
+                    "Content-Disposition": "attachment; filename=\"syncbox-ok.sqlite\"",
+                    "X-SyncBox-Backup-SHA256": sendHeader
+                ],
+                Data("abc".utf8)
+            )
+        }
+        let backup = try await api.downloadBackup()
+        XCTAssertEqual(backup.filename, "syncbox-ok.sqlite")
+        XCTAssertEqual(backup.sha256, expectedDigest)
+        XCTAssertEqual(backup.size, 3)
+
+        sendHeader = "0000"
+        do {
+            _ = try await api.downloadBackup()
+            XCTFail("Mismatched backup digest must fail")
+        } catch let err as APIError {
+            XCTAssertTrue(err.message.contains("校验"))
+        }
+
+        let tempFile = FileManager.default.temporaryDirectory.appendingPathComponent("syncbox-test-\(UUID().uuidString).txt")
+        try Data("hello file".utf8).write(to: tempFile)
+        defer { try? FileManager.default.removeItem(at: tempFile) }
+
+        BackupAndUploadURLProtocol.handler = { _ in
+            (201, ["Content-Type": "application/json"], Data("{\"id\":\"m9\",\"content\":\"\",\"createdAt\":\"2026-11-09T00:00:00.000Z\",\"isStarred\":false}".utf8))
+        }
+        var seenProgress: [UploadProgress] = []
+        let uploaded = try await api.sendFiles(
+            "conv-1",
+            files: [PendingFile(name: "test.txt", size: 10, fileURL: tempFile, ownsFile: false)],
+            content: "",
+            clientId: "cid-1"
+        ) { progress in
+            seenProgress.append(progress)
+        }
+        XCTAssertEqual(uploaded.id, "m9")
+        XCTAssertEqual(seenProgress.first?.loaded, 0)
+        XCTAssertEqual(seenProgress.last?.percent, 100)
     }
 
 }

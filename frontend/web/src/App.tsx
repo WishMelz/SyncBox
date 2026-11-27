@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { authApi, type Session } from '@/services/auth';
 import { devicesApi } from '@/services/devices';
 import { ApiError } from '@/services/api';
+import { mediaCache } from '@/lib/media-cache';
 import { LoginPage } from '@/pages/login-page';
 import { WorkspacePage } from '@/pages/workspace-page';
 const key = 'syncbox-session';
@@ -54,6 +55,7 @@ export function App() {
   const [checking, setChecking] = useState(!!session),
     [error, setError] = useState('');
   function clear() {
+    mediaCache.clear();
     getStorage('local')?.removeItem(key);
     getStorage('session')?.removeItem(key);
     setSession(null);

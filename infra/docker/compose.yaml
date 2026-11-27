@@ -1,10 +1,14 @@
 services:
   syncbox:
-    image: wishmelz/syncbox:latest
+    # Pin an explicit version in production; SQLite migrations run automatically
+    # on startup and are not reversible on image downgrade.
+    image: wishmelz/syncbox:${SYNCBOX_VERSION:-v1.0.5}
     ports:
       - "${SYNCBOX_PORT:-8080}:3000"
     environment:
-      TRUST_PROXY: "true"
+      # Direct LAN/host exposure must NOT trust client X-Forwarded-For headers.
+      # Use compose.proxy.yaml when running behind a reverse proxy.
+      TRUST_PROXY: "false"
       NODE_ENV: production
       HOST: 0.0.0.0
       PORT: 3000

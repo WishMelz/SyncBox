@@ -59,12 +59,19 @@ export class ConversationsService {
       };
     });
   }
-  async markRead(userId: string, id: string) {
-    await this.detail(userId, id);
-    await this.db.query(
-      'UPDATE messages SET is_read=1 WHERE user_id=? AND conversation_id=? AND is_read=0',
-      [userId, id],
-    );
+  async markRead(userId: string, id: string): Promise<number> {
+    return this.db.transaction(async (manager) => {
+      const owned = await manager.query(
+        'SELECT id FROM conversations WHERE id = ? AND user_id = ?',
+        [id, userId],
+      );
+      if (!owned[0]) throw new NotFoundException('会话不存在');
+      const updated = await manager.query(
+        'UPDATE messages SET is_read=1 WHERE user_id=? AND conversation_id=? AND is_read=0 RETURNING id',
+        [userId, id],
+      );
+      return updated.length;
+    });
   }
   async update(userId: string, id: string, dto: { title?: string; pinned?: boolean }) {
     await this.detail(userId, id);

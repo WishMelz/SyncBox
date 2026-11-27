@@ -3,6 +3,29 @@ import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 
 export const ATTACHMENT_LIMIT = 20 * 1024 * 1024;
+
+export class AsyncSemaphore {
+  private active = 0;
+  private readonly queue: (() => void)[] = [];
+
+  constructor(private readonly maxConcurrent: number) {}
+
+  async run<T>(work: () => Promise<T>): Promise<T> {
+    if (this.active >= this.maxConcurrent) {
+      await new Promise<void>((resolve) => this.queue.push(resolve));
+    }
+    this.active += 1;
+    try {
+      return await work();
+    } finally {
+      this.active -= 1;
+      const next = this.queue.shift();
+      if (next) next();
+    }
+  }
+}
+
+export const previewSemaphore = new AsyncSemaphore(2);
 export interface AttachmentUpload {
   id: string;
   name: string;
@@ -66,25 +89,27 @@ export async function prepareAttachments(
     // Only decoded raster images receive a preview. Other files are download-only.
     // Originals, including animation and metadata, are preserved byte-for-byte.
     try {
-      const image = sharp(file.buffer, { limitInputPixels: 24_000_000, failOn: 'warning' });
-      const metadata = await image.metadata();
-      const formats: Record<string, string> = {
-        jpeg: 'image/jpeg',
-        png: 'image/png',
-        webp: 'image/webp',
-        gif: 'image/gif',
-      };
-      if (metadata.format && formats[metadata.format]) {
-        const preview = await image
-          .rotate()
-          .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
-          .webp({ quality: 85 })
-          .toBuffer({ resolveWithObject: true });
-        attachment.mimeType = formats[metadata.format]!;
-        attachment.preview = preview.data;
-        attachment.width = preview.info.width;
-        attachment.height = preview.info.height;
-      }
+      await previewSemaphore.run(async () => {
+        const image = sharp(file.buffer, { limitInputPixels: 24_000_000, failOn: 'warning' });
+        const metadata = await image.metadata();
+        const formats: Record<string, string> = {
+          jpeg: 'image/jpeg',
+          png: 'image/png',
+          webp: 'image/webp',
+          gif: 'image/gif',
+        };
+        if (metadata.format && formats[metadata.format]) {
+          const preview = await image
+            .rotate()
+            .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
+            .webp({ quality: 85 })
+            .toBuffer({ resolveWithObject: true });
+          attachment.mimeType = formats[metadata.format]!;
+          attachment.preview = preview.data;
+          attachment.width = preview.info.width;
+          attachment.height = preview.info.height;
+        }
+      });
     } catch {
       /* Unsupported or oversized raster images remain downloadable originals. */
     }

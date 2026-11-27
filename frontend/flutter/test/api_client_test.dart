@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -112,7 +113,10 @@ void main() {
       )..token = 'token';
       try {
         await api.sendFiles('conversation', [
-          (name: '报告.txt', bytes: await file.readAsBytes()),
+          UploadFile.bytes(
+            name: '报告.txt',
+            bytes: await file.readAsBytes(),
+          ),
         ], '');
       } finally {
         api.close();
@@ -120,4 +124,96 @@ void main() {
       }
     },
   );
+
+  test('streams XFile uploads with progress and supports cancellation', () async {
+    final directory = await Directory.systemTemp.createTemp('syncbox-stream-');
+    final file = File('${directory.path}${Platform.pathSeparator}large.bin')
+      ..writeAsBytesSync(List<int>.filled(4096, 7));
+    final seenProgress = <int>[];
+    final api = ApiClient(
+      Uri.parse('https://example.com'),
+      client: MockClient((_) async => http.Response('{}', 201)),
+    )..token = 'token';
+    try {
+      await api.sendFiles(
+        'conversation',
+        [
+          UploadFile.xfile(
+            name: 'large.bin',
+            size: 4096,
+            file: XFile(file.path, name: 'large.bin'),
+          ),
+        ],
+        'hello',
+        'client-1',
+        (p) => seenProgress.add(p.percent),
+      );
+      expect(seenProgress.first, 0);
+      expect(seenProgress.last, 100);
+
+      final cancelToken = UploadCancelToken()..cancel();
+      await expectLater(
+        api.sendFiles(
+          'conversation',
+          [
+            UploadFile.xfile(
+              name: 'large.bin',
+              size: 4096,
+              file: XFile(file.path, name: 'large.bin'),
+            ),
+          ],
+          'hello',
+          'client-2',
+          null,
+          cancelToken,
+        ),
+        throwsA(isA<UploadCancelledException>()),
+      );
+    } finally {
+      api.close();
+      await directory.delete(recursive: true);
+    }
+  });
+
+  test('downloadBackup verifies X-SyncBox-Backup-SHA256 digest', () async {
+    final payload = Uint8List.fromList(utf8.encode('abc'));
+    var header =
+        'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad';
+    var includeHeader = true;
+    final api = ApiClient(
+      Uri.parse('https://example.com'),
+      client: MockClient((r) async {
+        expect(r.url.path, '/api/v1/settings/backup');
+        return http.Response.bytes(
+          payload,
+          200,
+          headers: {
+            'content-disposition': 'attachment; filename="syncbox-test.sqlite"',
+            if (includeHeader) 'x-syncbox-backup-sha256': header,
+          },
+        );
+      }),
+    )..token = 'token';
+
+    final ok = await api.downloadBackup();
+    expect(ok.filename, 'syncbox-test.sqlite');
+    expect(ok.sha256, header);
+    expect(ok.size, 3);
+
+    header =
+        'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855';
+    await expectLater(
+      api.downloadBackup(),
+      throwsA(
+        isA<ApiException>().having((e) => e.message, 'message', contains('校验')),
+      ),
+    );
+
+    includeHeader = false;
+    await expectLater(
+      api.downloadBackup(),
+      throwsA(isA<ApiException>()),
+    );
+    api.close();
+  });
 }

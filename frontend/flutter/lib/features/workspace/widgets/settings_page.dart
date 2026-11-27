@@ -1,4 +1,9 @@
+import 'dart:async';
+import 'dart:io';
+
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../../core/network/api_client.dart';
 import '../../connection/connection_controller.dart';
@@ -30,8 +35,9 @@ class _SettingsPageState extends State<SettingsPage> {
       code = TextEditingController(),
       confirmation = TextEditingController();
   bool busy = false, cleanup = false;
-  String? error, notice, secret;
+  String? error, notice, secret, otpauthUri;
   List<String> recovery = [];
+  int _settingsRevision = 0;
   ApiClient get api => widget.connection.api!;
   void reportNavigationLock() {
     final locked = busy || recovery.isNotEmpty;
@@ -40,15 +46,34 @@ class _SettingsPageState extends State<SettingsPage> {
     });
   }
 
+  void _onWorkspaceChanged() {
+    if (!mounted) return;
+    if (widget.workspace.settingsRevision != _settingsRevision) {
+      _settingsRevision = widget.workspace.settingsRevision;
+      if (!busy && widget.workspace.settingsOpen) {
+        unawaited(run(load));
+      }
+    }
+  }
+
   @override
   void initState() {
     super.initState();
     name.text = widget.connection.deviceName;
+    _settingsRevision = widget.workspace.settingsRevision;
+    widget.workspace.addListener(_onWorkspaceChanged);
+    if (!widget.embedded) {
+      widget.workspace.setSettingsOpen(true);
+    }
     run(load);
   }
 
   @override
   void dispose() {
+    widget.workspace.removeListener(_onWorkspaceChanged);
+    if (!widget.embedded) {
+      widget.workspace.setSettingsOpen(false);
+    }
     for (final c in [name, days, password, code, confirmation]) {
       c.dispose();
     }
@@ -97,7 +122,60 @@ class _SettingsPageState extends State<SettingsPage> {
     password.clear();
     code.clear();
     secret = null;
+    otpauthUri = null;
   }
+
+  Future<void> copySecret() async {
+    if (secret == null) return;
+    await Clipboard.setData(ClipboardData(text: secret!));
+    if (mounted) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('密钥已复制')));
+    }
+  }
+
+  Future<void> openOtpauth() async {
+    final uri = otpauthUri;
+    if (uri == null || uri.isEmpty) return;
+    if (Platform.isAndroid) {
+      try {
+        await const MethodChannel('syncbox/links').invokeMethod<bool>(
+          'openOtpauth',
+          uri,
+        );
+        return;
+      } catch (_) {}
+    }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('未找到验证器应用，请手动复制密钥添加')),
+      );
+    }
+  }
+
+  Future<void> downloadBackup() => run(() async {
+    final backup = await api.downloadBackup();
+    var saved = false;
+    if (Platform.isAndroid) {
+      saved =
+          await const MethodChannel('syncbox/files').invokeMethod<bool>(
+            'save',
+            {'name': backup.filename, 'bytes': backup.bytes},
+          ) ??
+          false;
+    } else {
+      final location = await getSaveLocation(suggestedName: backup.filename);
+      if (location != null) {
+        await XFile.fromData(backup.bytes).saveTo(location.path);
+        saved = true;
+      }
+    }
+    if (saved) {
+      notice =
+          '备份已保存：${backup.filename}（${(backup.size / 1024 / 1024).toStringAsFixed(2)} MB）';
+    }
+  });
 
   Future<void> changeTwoFactor() async {
     if (settings!['twoFactorEnabled'] == true) {
@@ -116,6 +194,7 @@ class _SettingsPageState extends State<SettingsPage> {
         body: security,
       );
       secret = data['secret'];
+      otpauthUri = data['otpauthUri'] as String?;
       code.clear();
     } else {
       final data = await api.request(
@@ -313,6 +392,12 @@ class _SettingsPageState extends State<SettingsPage> {
                         }),
                   child: const Text('保存清理设置'),
                 ),
+                heading('数据备份', '下载完整 SQLite 备份文件，用于异地容灾或迁移。'),
+                FilledButton.tonalIcon(
+                  onPressed: busy ? null : downloadBackup,
+                  icon: const Icon(Icons.download_outlined),
+                  label: const Text('下载数据库备份'),
+                ),
                 heading(
                   '账号安全',
                   settings!['twoFactorEnabled'] == true
@@ -334,14 +419,30 @@ class _SettingsPageState extends State<SettingsPage> {
                 ),
                 if (secret != null) ...[
                   const SizedBox(height: 12),
-                  const Text('在验证器中手动添加下方密钥，再输入生成的 6 位验证码。密钥有效期 10 分钟。'),
+                  const Text('在验证器中手动添加下方密钥，或点击直接跳转验证器，再输入生成的 6 位验证码。密钥有效期 10 分钟。'),
                   SelectableText(
                     secret!,
                     style: const TextStyle(fontFamily: 'monospace'),
                   ),
-                  TextButton(
-                    onPressed: busy ? null : () => setState(clearSecurity),
-                    child: const Text('取消设置'),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      if (otpauthUri != null && otpauthUri!.isNotEmpty)
+                        TextButton.icon(
+                          onPressed: busy ? null : openOtpauth,
+                          icon: const Icon(Icons.open_in_new, size: 18),
+                          label: const Text('在验证器中打开'),
+                        ),
+                      TextButton.icon(
+                        onPressed: busy ? null : copySecret,
+                        icon: const Icon(Icons.copy, size: 18),
+                        label: const Text('复制密钥'),
+                      ),
+                      TextButton(
+                        onPressed: busy ? null : () => setState(clearSecurity),
+                        child: const Text('取消设置'),
+                      ),
+                    ],
                   ),
                 ],
                 const SizedBox(height: 12),

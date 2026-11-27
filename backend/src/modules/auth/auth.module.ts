@@ -1,13 +1,12 @@
-import { ThrottlerModule } from '@nestjs/throttler';
 import { Module } from '@nestjs/common';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { AuthGuard } from './auth.guard';
+import { PresenceTracker } from './presence.tracker';
 
 @Module({
-  imports: [ThrottlerModule.forRoot([{ ttl: 60000, limit: 10 }])],
   controllers: [AuthController],
-  providers: [AuthService, AuthGuard],
-  exports: [AuthGuard, AuthService],
+  providers: [AuthService, AuthGuard, PresenceTracker],
+  exports: [AuthGuard, AuthService, PresenceTracker],
 })
 export class AuthModule {}

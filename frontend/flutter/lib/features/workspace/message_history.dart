@@ -4,9 +4,14 @@ import '../../models/message.dart';
 /// A bounded, in-memory reading window. No queued sends or persistent copies.
 class MessageHistory {
   MessageHistory(this.fetch);
-  final Future<PageResult<Message>> Function({String? before, String? since})
+  final Future<PageResult<Message>> Function({
+    String? before,
+    String? since,
+    bool includeTotal,
+  })
   fetch;
   List<Message> items = [];
+  int total = 0;
   int totalPages = 0;
   bool ready = false, hasOlder = false, loadingOlder = false;
   Object? olderError;
@@ -32,25 +37,65 @@ class MessageHistory {
     return task;
   }
 
+  Future<void> reconcile() => refresh();
+
   Future<void> refresh() => _enqueue(() async {
     final since = items.isEmpty ? null : cursor(items.last);
-    var page = await fetch(since: since);
+    var page = await fetch(since: since, includeTotal: true);
     var result = page.items;
     final seen = <String>{};
     while (since != null && page.hasMore == true && page.nextCursor != null) {
       if (!seen.add(page.nextCursor!)) throw StateError('历史消息加载位置未前进');
-      page = await fetch(since: since, before: page.nextCursor);
+      page = await fetch(
+        since: since,
+        before: page.nextCursor,
+        includeTotal: false,
+      );
       result = merge(result, page.items);
     }
     if (result.isEmpty && (page.total ?? 0) > 0 && since != null) {
-      page = await fetch();
+      page = await fetch(includeTotal: true);
       result = page.items;
     }
     items = merge([], result);
-    totalPages = page.totalPages;
+    total = page.total ?? items.length;
+    totalPages = page.totalPages > 0 || total == 0
+        ? page.totalPages
+        : ((total + 29) ~/ 30);
     hasOlder = page.total != null ? page.total! > items.length : totalPages > 1;
     ready = true;
   });
+
+  Future<void> refreshLatest() => _enqueue(() async {
+    if (!ready) {
+      final page = await fetch(includeTotal: true);
+      items = merge([], page.items);
+      total = page.total ?? items.length;
+      totalPages = page.totalPages > 0 || total == 0
+          ? page.totalPages
+          : ((total + 29) ~/ 30);
+      hasOlder = page.total != null ? page.total! > items.length : totalPages > 1;
+      ready = true;
+      return;
+    }
+    final page = await fetch(includeTotal: true);
+    if (page.hasMore != true || page.items.isEmpty) {
+      items = merge([], page.items);
+    } else {
+      final boundaryCursor = cursor(page.items.last);
+      final olderKept = items
+          .where((m) => cursor(m).compareTo(boundaryCursor) < 0)
+          .toList();
+      items = merge(page.items, olderKept);
+    }
+    total = page.total ?? items.length;
+    totalPages = page.totalPages > 0 || total == 0
+        ? page.totalPages
+        : ((total + 29) ~/ 30);
+    hasOlder = page.total != null ? page.total! > items.length : totalPages > 1;
+    ready = true;
+  });
+
   Future<void> loadOlder() async {
     if (!ready || !hasOlder || loadingOlder) return;
     loadingOlder = true;
@@ -58,11 +103,20 @@ class MessageHistory {
     try {
       await _enqueue(() async {
         if (items.isEmpty) return;
-        final page = await fetch(before: cursor(items.last));
+        final page = await fetch(
+          before: cursor(items.last),
+          includeTotal: false,
+        );
         items = merge(items, page.items);
-        totalPages = page.totalPages;
-        hasOlder =
-            page.hasMore ?? ((page.total ?? items.length) > items.length);
+        if (page.total != null) {
+          total = page.total!;
+        } else if (total < items.length) {
+          total = items.length;
+        }
+        totalPages = page.totalPages > 0
+            ? page.totalPages
+            : (total == 0 ? 0 : ((total + 29) ~/ 30));
+        hasOlder = page.hasMore ?? (total > items.length);
       });
     } catch (e) {
       olderError = e;
@@ -70,5 +124,26 @@ class MessageHistory {
     } finally {
       loadingOlder = false;
     }
+  }
+
+  void upsertMessage(Message message) {
+    final existed = items.any((m) => m.id == message.id);
+    items = merge(items, [message]);
+    if (!existed) {
+      total = total + 1 > items.length ? total + 1 : items.length;
+    } else if (total < items.length) {
+      total = items.length;
+    }
+    totalPages = total == 0 ? 0 : ((total + 29) ~/ 30);
+    hasOlder = total > items.length;
+  }
+
+  void removeMessage(String id) {
+    final existed = items.any((m) => m.id == id);
+    if (!existed) return;
+    items = items.where((m) => m.id != id).toList();
+    total = (total - 1) < items.length ? items.length : total - 1;
+    totalPages = total == 0 ? 0 : ((total + 29) ~/ 30);
+    hasOlder = total > items.length;
   }
 }

@@ -12,6 +12,7 @@ struct WorkspaceView: View {
     @State private var showDevices = false
     @State private var showLogout = false
     @State private var showFavorites = false
+    @State private var showFiles = false
     @State private var showSettings = false
     #if os(iOS)
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
@@ -25,8 +26,10 @@ struct WorkspaceView: View {
         .task(id: scenePhase) {
             guard scenePhase == .active else { model.stopEvents(); return }
             model.startEvents()
+            var isFirstPass = true
             while !Task.isCancelled {
-                await model.refresh()
+                await model.refresh(reconcile: isFirstPass)
+                isFirstPass = false
                 do { try await Task.sleep(for: .seconds(model.realtimeConnected ? 30 : 5)) } catch { return }
             }
         }
@@ -42,6 +45,7 @@ struct WorkspaceView: View {
             ConversationTitleEditor(model: model, conversation: request.conversation)
         }
         .sheet(isPresented: $showFavorites) { FavoritesView(model: model) }
+        .sheet(isPresented: $showFiles) { FilesView(model: model) }
         .sheet(isPresented: $showSettings) { SettingsView(connection: connection, model: model) }
         .sheet(isPresented: $showDevices) { DevicesView(model: model, server: connection.serverText, currentDeviceId: connection.deviceId) }
         .alert("删除会话？", isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } })) {
@@ -115,6 +119,7 @@ struct WorkspaceView: View {
                     }
                 }.padding(12)
                 Button { showFavorites = true } label: { Label("收藏", systemImage: "star").frame(maxWidth: .infinity, alignment: .leading) }.buttonStyle(.borderless).padding(.horizontal, 16).padding(.vertical, 10)
+                Button { showFiles = true } label: { Label("文件", systemImage: "folder").frame(maxWidth: .infinity, alignment: .leading) }.buttonStyle(.borderless).padding(.horizontal, 16).padding(.vertical, 10)
                 List(selection: $model.selected) {
                     ForEach(model.conversations.items) { conversation in
                         NavigationLink(value: conversation) {
@@ -149,7 +154,7 @@ struct WorkspaceView: View {
                         }
                     }
                 }
-                .refreshable { await model.refresh() }
+                .refreshable { await model.refresh(reconcile: true) }
                 .overlay {
                     if model.conversations.items.isEmpty {
                         ContentUnavailableView(model.loading ? "正在加载…" : model.conversationQuery.isEmpty ? "暂无会话" : "没有匹配的会话", systemImage: "bubble.left.and.bubble.right", description: Text(model.conversationQuery.isEmpty ? "新建会话，发送文字、图片或文件。" : "换个关键词试试。"))
@@ -171,7 +176,7 @@ struct WorkspaceView: View {
                     Menu {
                         Button("设置", systemImage: "gearshape") { showSettings = true }
                         Button("已登记设备", systemImage: "desktopcomputer") { showDevices = true }
-                        Button("刷新", systemImage: "arrow.clockwise") { Task { await model.refresh() } }
+                        Button("刷新", systemImage: "arrow.clockwise") { Task { await model.refresh(reconcile: true) } }
                         Button("退出登录", systemImage: "rectangle.portrait.and.arrow.right") { showLogout = true }
                     } label: { Image(systemName: "ellipsis.circle").font(.title3) }
                     .menuStyle(.borderlessButton).fixedSize()
@@ -333,6 +338,8 @@ struct DevicesView: View {
             }.navigationTitle("我的设备")
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("完成") { dismiss() } } }
                 .task { await model.loadDevices() }
+                .onAppear { model.devicesOpen = true }
+                .onDisappear { model.devicesOpen = false }
         }.frame(idealWidth: 460, idealHeight: 500)
     }
 }

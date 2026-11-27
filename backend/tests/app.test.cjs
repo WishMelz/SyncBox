@@ -21,18 +21,19 @@ test('Nest API checks SQLite, handles unknown routes, and retains data after rec
   const directory = await mkdtemp(join(tmpdir(), 'syncbox-test-'));
   const previousPath = process.env.DATABASE_PATH;
   process.env.DATABASE_PATH = join(directory, 'test.sqlite');
+  let app;
   t.after(async () => {
+    await app?.close();
     if (previousPath === undefined) delete process.env.DATABASE_PATH;
     else process.env.DATABASE_PATH = previousPath;
     await rm(directory, { recursive: true, force: true });
   });
   const { AppModule } = require('../dist/app.module');
   const { configureApp } = require('../dist/app.setup');
-  const app = await NestFactory.create(AppModule, new ExpressAdapter(), {
+  app = await NestFactory.create(AppModule, new ExpressAdapter(), {
     logger: false,
     abortOnError: false,
   });
-  t.after(() => app.close());
   configureApp(app);
   await app.init();
   const health = await request(app.getHttpServer()).get('/api/v1/health').expect(200);

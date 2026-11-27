@@ -59,3 +59,34 @@ test('sending preserves loaded history, while cold conversation refreshes its la
   history.sent({ ...sent, id: '010' });
   assert.equal(history.state.data.items.length, 7);
 });
+
+test('refreshLatest fetches only 1 page even when multiple older pages are loaded, and upsert/remove patch locally', async () => {
+  const { state, history } = fixture();
+  await history.refresh();
+  await history.loadOlder();
+  await history.loadOlder();
+  assert.equal(history.state.data.items.length, 9);
+  assert.ok(state.calls.some((c) => c.before && c.includeTotal === false));
+
+  const callsBefore = state.calls.length;
+  // Delete message 007 (on page 1) and add 009 while page 2 & 3 stay loaded.
+  state.messages = state.messages.filter((m) => m.id !== '007');
+  state.messages.push({ id: '009', createdAt: '2026-11-09T00:00:00.000Z', content: 'new' });
+  await history.refreshLatest();
+  assert.equal(state.calls.length - callsBefore, 1, 'refreshLatest must make only 1 fetchPage call');
+  assert.deepEqual(
+    history.state.data.items.map((m) => m.id),
+    ['009', '008', '006', '005', '004', '003', '002', '001', '000'],
+  );
+
+  history.upsertMessage({ id: '010', createdAt: '2026-11-09T00:00:00.000Z', content: 'patched' });
+  assert.equal(history.state.data.items[0].id, '010');
+  assert.equal(history.state.data.total, 10);
+
+  history.removeMessage('007'); // no-op for absent message
+  assert.equal(history.state.data.total, 10);
+
+  history.removeMessage('010');
+  assert.equal(history.state.data.items[0].id, '009');
+  assert.equal(history.state.data.total, 9);
+});

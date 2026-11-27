@@ -1,12 +1,3 @@
-import { ActionMenu } from '@/components/ui/action-menu';
-import { BrandIcon } from '@/components/ui/brand-icon';
-import { SyncStatus } from '@/components/layout/sync-status';
-import { MobileWorkspaceNav } from '@/components/layout/mobile-workspace-nav';
-import { AnnotationDialog } from '@/components/chat/annotation-dialog';
-import { SettingsPanel } from '@/components/settings/settings-panel';
-import { FavoritesPanel } from '@/components/chat/favorites-panel';
-import { FilesPanel } from '@/components/chat/files-panel';
-import { AttachmentMenu } from '@/components/chat/attachment-menu';
 import {
   useCallback,
   useEffect,
@@ -20,36 +11,38 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
-  LogOut,
-  MessageSquare,
-  Plus,
-  Pin,
-  Star,
-  Search,
-  Send,
   Pencil,
-  Settings,
+  Pin,
+  Plus,
+  Search,
   Trash2,
   X,
-  FolderOpen,
-  RefreshCw,
 } from 'lucide-react';
+import { ActionMenu } from '@/components/ui/action-menu';
 import { Button } from '@/components/ui/button';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
-import { HighlightText } from '@/components/ui/highlight-text';
-import { AttachmentDrafts } from '@/components/chat/attachment-drafts';
-import { validateAttachments } from '@/lib/attachments';
-import { uploadAttachments, type UploadProgress } from '@/services/attachments';
-import { formatBytes } from '@/lib/attachments';
+import { MobileWorkspaceNav } from '@/components/layout/mobile-workspace-nav';
+import { AnnotationDialog } from '@/components/chat/annotation-dialog';
+import { FavoritesPanel } from '@/components/chat/favorites-panel';
+import { FilesPanel } from '@/components/chat/files-panel';
 import { VirtualMessageFeed } from '@/components/chat/virtual-message-feed';
-import { ConversationContextMenu } from '@/components/chat/conversation-context-menu';
-import { conversationsApi, type Conversation, type Page } from '@/services/conversations';
-import { messagesApi, type Message } from '@/services/messages';
-import { devicesApi, type Device } from '@/services/devices';
-import type { Session } from '@/services/auth';
-import { ApiError } from '@/services/api';
+import { SettingsPanel } from '@/components/settings/settings-panel';
+import { ConversationSidebar } from '@/components/workspace/conversation-sidebar';
+import { MessageComposer } from '@/components/workspace/message-composer';
+import { DevicesDialog } from '@/components/workspace/devices-dialog';
+import { validateAttachments } from '@/lib/attachments';
+import { mediaCache } from '@/lib/media-cache';
 import { SendAttempts } from '@/lib/send-attempts';
+import { planSyncActions, type SyncBatch } from '@/lib/sync-events';
+import { useDeviceHeartbeat } from '@/hooks/use-device-heartbeat';
 import { useMessageHistory } from '@/hooks/use-message-history';
+import { useSyncEvents } from '@/hooks/use-sync-events';
+import { ApiError } from '@/services/api';
+import { uploadAttachments, type UploadProgress } from '@/services/attachments';
+import type { Session } from '@/services/auth';
+import { conversationsApi, type Conversation, type Page } from '@/services/conversations';
+import { devicesApi, type Device } from '@/services/devices';
+import { messagesApi, type Message } from '@/services/messages';
 
 export function WorkspacePage({
   session,
@@ -76,11 +69,15 @@ export function WorkspacePage({
   const [listLoading, setListLoading] = useState(true);
   const [messageConnected, setMessageConnected] = useState(true);
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null);
+  const [lastSyncOk, setLastSyncOk] = useState(true);
   const [feedError, setFeedError] = useState('');
   const [annotationTarget, setAnnotationTarget] = useState<Message | null>(null);
   const [annotationRevision, setAnnotationRevision] = useState(0);
   const [favoritesOpen, setFavoritesOpen] = useState(false);
+  const [favoritesSyncRevision, setFavoritesSyncRevision] = useState(0);
   const [filesOpen, setFilesOpen] = useState(false);
+  const [filesSyncRevision, setFilesSyncRevision] = useState(0);
+  const [settingsSyncRevision, setSettingsSyncRevision] = useState(0);
   const [pinBusy, setPinBusy] = useState(false);
   const [conversations, setConversations] = useState<Page<Conversation>>({
     items: [],
@@ -102,8 +99,7 @@ export function WorkspacePage({
   const searchResults = messageQuery ? messages.items : [];
   const focusedSearchMessage = searchResults[searchResultIndex]?.id;
   const [error, setError] = useState(''),
-    [busy, setBusy] = useState(false),
-    [synced, setSynced] = useState(true);
+    [busy, setBusy] = useState(false);
   const [dialog, setDialog] = useState<'create' | 'rename' | 'delete' | 'devices' | null>(null),
     [name, setName] = useState(''),
     [devices, setDevices] = useState<Device[]>([]),
@@ -125,23 +121,8 @@ export function WorkspacePage({
   const conversationListRevision = useRef(0);
   useEffect(() => () => uploadController.current?.abort(), []);
   useEffect(() => () => conversationListController.current?.abort(), []);
-  useEffect(() => {
-    let active = true;
-    const beat = () => {
-      if (active && !document.hidden) void devicesApi.heartbeat(token).catch(() => undefined);
-    };
-    const onVisible = () => {
-      if (!document.hidden) beat();
-    };
-    beat();
-    const timer = window.setInterval(beat, 30_000);
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, [token]);
+  useDeviceHeartbeat(token);
+
   const fileInput = useRef<HTMLInputElement>(null);
   const imageInput = useRef<HTMLInputElement>(null);
   const messageInput = useRef<HTMLTextAreaElement>(null);
@@ -170,9 +151,29 @@ export function WorkspacePage({
       window.removeEventListener('resize', resize);
     };
   }, []);
+
   const sendLock = useRef(false);
   const selectedRef = useRef(selected?.id);
   selectedRef.current = selected?.id;
+  const uiStateRef = useRef({
+    selectedId: selected?.id ?? null,
+    isSearchingMessages: !!messageQuery,
+    isHistoryReady: feed.state.ready,
+    favoritesOpen,
+    filesOpen,
+    devicesOpen: dialog === 'devices',
+    settingsOpen,
+  });
+  uiStateRef.current = {
+    selectedId: selected?.id ?? null,
+    isSearchingMessages: !!messageQuery,
+    isHistoryReady: feed.state.ready,
+    favoritesOpen,
+    filesOpen,
+    devicesOpen: dialog === 'devices',
+    settingsOpen,
+  };
+
   const fail = useCallback(
     (e: unknown) => {
       if (e instanceof ApiError && e.status === 401) {
@@ -183,6 +184,7 @@ export function WorkspacePage({
     },
     [onExpired],
   );
+
   useEffect(() => {
     const id = setTimeout(() => {
       setQuery(search);
@@ -199,89 +201,35 @@ export function WorkspacePage({
   useEffect(() => {
     setSearchResultIndex(0);
   }, [messageQuery, selected?.id]);
-  useEffect(() => {
-    let active = true;
-    let requestController: AbortController | null = null;
-    setListLoading(true);
-    async function load() {
-      requestController?.abort();
-      const controller = new AbortController();
-      requestController = controller;
-      conversationListController.current?.abort();
-      conversationListController.current = controller;
-      const revision = ++conversationListRevision.current;
+
+  const loadMessages = useCallback(
+    async (mode: 'latest' | 'reconcile' = 'reconcile') => {
+      if (!selected) return;
+      const id = selected.id;
       try {
-        const result = await conversationsApi.list(token, query, page, controller.signal);
-        if (active && revision === conversationListRevision.current) {
-          setConversations(result);
-          setSelected((current) =>
-            current ? (result.items.find((c) => c.id === current.id) ?? current) : current,
-          );
-          setSynced(true);
+        if (mode === 'reconcile') {
+          await feed.history.reconcile();
+        } else {
+          await feed.history.refreshLatest();
+        }
+        if (selectedRef.current === id) {
+          setMessageConnected(true);
+          setFeedError('');
           setLastSyncedAt(Date.now());
         }
       } catch (e) {
-        if (active && revision === conversationListRevision.current && !controller.signal.aborted) {
-          setSynced(false);
+        if (selectedRef.current === id) {
+          if (e instanceof ApiError && e.status === 404) setSelected(null);
+          setMessageConnected(false);
+          setFeedError('消息加载失败，请重试');
           if (e instanceof ApiError && e.status === 401) fail(e);
         }
-      } finally {
-        if (active && revision === conversationListRevision.current) setListLoading(false);
-        if (requestController === controller) requestController = null;
       }
-    }
-    void load();
-    const timer = setInterval(() => {
-      if (!document.hidden) void load();
-    }, 5000);
-    const onVisible = () => {
-      if (!document.hidden) void load();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      active = false;
-      requestController?.abort();
-      if (conversationListController.current === requestController)
-        conversationListController.current = null;
-      clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, [token, query, page]);
-  const loadMessages = useCallback(async () => {
-    if (!selected) return;
-    const id = selected.id;
-    try {
-      await feed.history.refresh();
-      if (selectedRef.current === id) {
-        setMessageConnected(true);
-        setFeedError('');
-      }
-    } catch (e) {
-      if (selectedRef.current === id) {
-        if (e instanceof ApiError && e.status === 404) setSelected(null);
-        setMessageConnected(false);
-        setFeedError('消息加载失败，请重试');
-        if (e instanceof ApiError && e.status === 401) fail(e);
-      }
-    }
-  }, [feed.history, selected?.id]);
-  useEffect(() => {
-    if (!selected) return;
-    setFeedError('');
-    void loadMessages();
-    const timer = setInterval(() => {
-      if (!document.hidden) void loadMessages();
-    }, 5000);
-    const onVisible = () => {
-      if (!document.hidden) void loadMessages();
-    };
-    document.addEventListener('visibilitychange', onVisible);
-    return () => {
-      clearInterval(timer);
-      document.removeEventListener('visibilitychange', onVisible);
-    };
-  }, [loadMessages]);
-  async function refresh() {
+    },
+    [feed.history, selected?.id, fail],
+  );
+
+  const refresh = useCallback(async () => {
     conversationListController.current?.abort();
     const controller = new AbortController();
     conversationListController.current = controller;
@@ -290,88 +238,192 @@ export function WorkspacePage({
       const result = await conversationsApi.list(token, query, page, controller.signal);
       if (controller.signal.aborted || revision !== conversationListRevision.current) return;
       setConversations(result);
-      setSynced(true);
+      setSelected((current) =>
+        current ? (result.items.find((c) => c.id === current.id) ?? current) : current,
+      );
+      setLastSyncOk(true);
       setLastSyncedAt(Date.now());
     } catch (e) {
       if (controller.signal.aborted || revision !== conversationListRevision.current) return;
-      setSynced(false);
+      setLastSyncOk(false);
       throw e;
     } finally {
-      if (conversationListController.current === controller)
+      if (conversationListController.current === controller) {
         conversationListController.current = null;
+      }
       if (revision === conversationListRevision.current) setListLoading(false);
     }
-  }
+  }, [token, query, page]);
+
   const refreshRef = useRef(refresh);
   refreshRef.current = refresh;
   const loadMessagesRef = useRef(loadMessages);
   loadMessagesRef.current = loadMessages;
-  useEffect(() => {
-    // Read SSE with fetch so the bearer token stays in the Authorization header
-    // instead of appearing in proxy, browser, or server access logs.
-    let stopped = false;
-    let retryTimer: number | undefined;
-    const controller = new AbortController();
-    const refreshList = () =>
-      void refreshRef.current().catch((error) => {
-        if (error instanceof ApiError && error.status === 401) fail(error);
-      });
-    const onSync = (data: string) => {
-      try {
-        const detail = JSON.parse(data) as {
-          scope?: string;
-          conversationId?: string;
-        };
-        setSynced(true);
-        setLastSyncedAt(Date.now());
-        if (detail.scope === 'conversations' || detail.scope === 'devices') refreshList();
-        if (
-          detail.scope === 'messages' ||
-          detail.scope === 'favorites' ||
-          (detail.scope === 'conversations' && detail.conversationId === selectedRef.current)
-        ) {
-          void loadMessagesRef.current();
-        }
-      } catch {
-        refreshList();
-      }
-    };
-    const connect = async () => {
-      try {
-        const response = await fetch('/api/v1/events', {
-          headers: { Accept: 'text/event-stream', Authorization: `Bearer ${token}` },
-          signal: controller.signal,
-        });
-        if (!response.ok || !response.body) throw new Error('event stream unavailable');
-        setSynced(true);
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
-        while (!stopped) {
-          const chunk = await reader.read();
-          if (chunk.done) throw new Error('event stream closed');
-          buffer += decoder.decode(chunk.value, { stream: true });
-          const frames = buffer.split('\n\n');
-          buffer = frames.pop() ?? '';
-          for (const frame of frames) {
-            const event = frame.match(/^event:\s*sync\ndata:\s*(.+)$/m);
-            if (event?.[1]) onSync(event[1]);
+
+  const applySingleMessageEvents = useCallback(
+    async (targetConversationId: string, messageIds: string[]) => {
+      for (const messageId of messageIds) {
+        if (selectedRef.current !== targetConversationId) return;
+        try {
+          const updated = await messagesApi.detail(token, messageId);
+          if (selectedRef.current !== targetConversationId) return;
+          if (updated.conversationId !== targetConversationId) {
+            feed.history.removeMessage(messageId);
+            continue;
           }
-        }
-      } catch {
-        if (!stopped) {
-          setSynced(false);
-          retryTimer = window.setTimeout(() => void connect(), 3000);
+          const prev = feed.history.state.data.items.find((item) => item.id === updated.id);
+          if (
+            prev &&
+            (Boolean(prev.image) !== Boolean(updated.image) ||
+              (prev.attachments?.length ?? 0) !== (updated.attachments?.length ?? 0) ||
+              prev.filesExpired !== updated.filesExpired)
+          ) {
+            mediaCache.invalidateMessage(updated.id);
+          }
+          feed.history.upsertMessage(updated);
+          setMessageConnected(true);
+          setFeedError('');
+          setLastSyncedAt(Date.now());
+        } catch (e) {
+          if (e instanceof ApiError && e.status === 401) {
+            fail(e);
+            return;
+          }
+          if (e instanceof ApiError && e.status === 404) {
+            mediaCache.invalidateMessage(messageId);
+            feed.history.removeMessage(messageId);
+            setLastSyncedAt(Date.now());
+            continue;
+          }
+          await loadMessagesRef.current('latest');
+          return;
         }
       }
+    },
+    [token, feed.history, fail],
+  );
+
+  const handleSyncBatch = useCallback(
+    (batch: SyncBatch) => {
+      setLastSyncOk(true);
+      setLastSyncedAt(Date.now());
+      const state = uiStateRef.current;
+      const plan = planSyncActions(batch, {
+        selectedConversationId: state.selectedId,
+        isSearchingMessages: state.isSearchingMessages,
+        isHistoryReady: state.isHistoryReady,
+        favoritesOpen: state.favoritesOpen,
+        filesOpen: state.filesOpen,
+        devicesOpen: state.devicesOpen,
+        settingsOpen: state.settingsOpen,
+      });
+
+      if (plan.refreshConversations) {
+        void refreshRef.current().catch((error) => {
+          if (error instanceof ApiError && error.status === 401) fail(error);
+        });
+      }
+      if (plan.selectedHistory.type === 'refreshLatest') {
+        void loadMessagesRef.current('latest');
+      } else if (plan.selectedHistory.type === 'fetchMessages' && state.selectedId) {
+        void applySingleMessageEvents(state.selectedId, plan.selectedHistory.messageIds);
+      }
+      if (plan.refreshFavorites) {
+        setFavoritesSyncRevision((value) => value + 1);
+      }
+      if (plan.refreshFiles) {
+        setFilesSyncRevision((value) => value + 1);
+      }
+      if (plan.refreshDevices) {
+        void devicesApi
+          .list(token)
+          .then(setDevices)
+          .catch((error) => {
+            if (error instanceof ApiError && error.status === 401) fail(error);
+          });
+      }
+      if (plan.refreshSettings) {
+        setSettingsSyncRevision((value) => value + 1);
+      }
+    },
+    [token, applySingleMessageEvents, fail],
+  );
+
+  const handleReconnect = useCallback(() => {
+    setLastSyncOk(true);
+    setLastSyncedAt(Date.now());
+    void refreshRef.current().catch((error) => {
+      if (error instanceof ApiError && error.status === 401) fail(error);
+    });
+    if (selectedRef.current) void loadMessagesRef.current('reconcile');
+    if (uiStateRef.current.favoritesOpen) setFavoritesSyncRevision((v) => v + 1);
+    if (uiStateRef.current.filesOpen) setFilesSyncRevision((v) => v + 1);
+    if (uiStateRef.current.settingsOpen) setSettingsSyncRevision((v) => v + 1);
+    if (uiStateRef.current.devicesOpen) {
+      void devicesApi
+        .list(token)
+        .then(setDevices)
+        .catch(() => undefined);
+    }
+  }, [token, fail]);
+
+  const { sseHealthy } = useSyncEvents({
+    token,
+    onBatch: handleSyncBatch,
+    onReconnect: handleReconnect,
+    onExpired,
+  });
+
+  useEffect(() => {
+    let active = true;
+    setListLoading(true);
+    const load = () => {
+      void refreshRef.current().catch((e) => {
+        if (active && e instanceof ApiError && e.status === 401) fail(e);
+      });
     };
-    void connect();
+    load();
+    const timer = setInterval(
+      () => {
+        if (!document.hidden) load();
+      },
+      sseHealthy ? 60_000 : 5_000,
+    );
+    const onVisible = () => {
+      if (!document.hidden) load();
+    };
+    document.addEventListener('visibilitychange', onVisible);
     return () => {
-      stopped = true;
-      controller.abort();
-      if (retryTimer !== undefined) window.clearTimeout(retryTimer);
+      active = false;
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', onVisible);
     };
-  }, [token]);
+  }, [token, query, page, sseHealthy, fail]);
+
+  useEffect(() => {
+    if (!selected) return;
+    setFeedError('');
+    void loadMessages('reconcile');
+    const pollTimer = setInterval(
+      () => {
+        if (!document.hidden) void loadMessages('latest');
+      },
+      sseHealthy ? 60_000 : 5_000,
+    );
+    const reconcileTimer = setInterval(() => {
+      if (!document.hidden) void loadMessages('reconcile');
+    }, 300_000);
+    const onVisible = () => {
+      if (!document.hidden) void loadMessages('reconcile');
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      clearInterval(pollTimer);
+      clearInterval(reconcileTimer);
+      document.removeEventListener('visibilitychange', onVisible);
+    };
+  }, [loadMessages, sseHealthy, selected?.id]);
+
   function openConversationDialog(kind: 'rename' | 'delete', target: Conversation) {
     setDialogTarget(target);
     setName(target.title);
@@ -383,8 +435,6 @@ export function WorkspacePage({
     return `新建会话${String(now.getFullYear()).slice(-2)}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
   }
   function select(c: Conversation) {
-    // Clicking the active row again should be idempotent. In particular, do not
-    // clear a loaded history page while the existing selection is unchanged.
     if (selected?.id === c.id) return;
     setSelected(c);
     setMessageSearch('');
@@ -495,7 +545,6 @@ export function WorkspacePage({
         });
       }
     }
-    // A successful write stays successful even if the following reads fail.
     sendAttempts.current.clear(id);
     setAttachments((current) => ({
       ...current,
@@ -513,9 +562,8 @@ export function WorkspacePage({
       setMessageConnected(true);
     }
     setLastSyncedAt(Date.now());
-    // Refresh through the normal path so current search/selection revisions win.
     const results = await Promise.allSettled([
-      selectedRef.current === id ? targetHistory.refresh() : Promise.resolve(),
+      selectedRef.current === id ? targetHistory.refreshLatest() : Promise.resolve(),
       refreshRef.current(),
     ]);
     if (
@@ -665,11 +713,15 @@ export function WorkspacePage({
       setPinBusy(false);
     }
   }
-  async function action(work: () => Promise<unknown>) {
+  async function action(work: () => Promise<unknown>, deletedMessageId?: string) {
     try {
       setError('');
       await work();
-      await loadMessages();
+      if (deletedMessageId) {
+        mediaCache.invalidateMessage(deletedMessageId);
+        feed.history.removeMessage(deletedMessageId);
+      }
+      await loadMessages('latest');
       await refresh();
     } catch (e) {
       fail(e);
@@ -690,6 +742,9 @@ export function WorkspacePage({
       throw e;
     }
   }
+
+  const syncConnected = lastSyncOk && (!selected || messageConnected);
+
   return (
     <div
       className="workspace"
@@ -706,6 +761,7 @@ export function WorkspacePage({
           selected &&
           !settingsOpen &&
           !favoritesOpen &&
+          !filesOpen &&
           !dialog &&
           !annotationTarget &&
           (e.ctrlKey || e.metaKey) &&
@@ -717,192 +773,37 @@ export function WorkspacePage({
         }
       }}
     >
-      <aside className={`conversation-pane ${selected || settingsOpen ? 'mobile-hidden' : ''}`}>
-        <div className="workspace-brand">
-          <div className="brand desktop-brand">
-            <BrandIcon size={28} />
-            SyncBox
-          </div>
-          <h1 className="mobile-list-title">消息列表</h1>
-          <div className="workspace-header-actions">
-            <button
-              className="icon-btn desktop-settings-entry"
-              aria-label="打开设置"
-              title="设置"
-              onClick={() => setSettingsOpen(true)}
-            >
-              <Settings size={19} />
-            </button>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="sidebar-create"
-              aria-label="创建会话"
-              title="新建会话"
-              onClick={() => {
-                setName(defaultConversationName());
-                setDialog('create');
-              }}
-            >
-              <Plus size={22} />
-            </Button>
-          </div>
-        </div>
-        <div className="sidebar-search-row">
-          <label className="search-box">
-            <Search size={16} />
-            <input
-              aria-label="搜索会话、消息、批注或文件名"
-              placeholder="搜索"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </label>
-        </div>
-        <div className="sidebar-intro">
-          <h2>会话</h2>
-          <div className="sidebar-actions">
-            <button
-              className="favorites-entry"
-              aria-label="查看收藏"
-              onClick={() => setFavoritesOpen(true)}
-            >
-              <Star size={14} />
-              收藏
-            </button>
-            <button
-              className="favorites-entry"
-              aria-label="查看文件"
-              onClick={() => setFilesOpen(true)}
-            >
-              <FolderOpen size={14} />
-              文件
-            </button>
-          </div>
-        </div>
-        <div className="conversation-list" aria-busy={listLoading}>
-          {listLoading && (
-            <p className="list-loading" role="status">
-              正在加载会话…
-            </p>
-          )}
-          {!listLoading &&
-            conversations.items.map((c) => (
-              <ConversationContextMenu
-                key={c.id}
-                conversation={c}
-                disabled={busy || pinBusy}
-                onPin={() => void togglePin(c)}
-                onRename={() => openConversationDialog('rename', c)}
-                onDelete={() => openConversationDialog('delete', c)}
-              >
-                <div
-                  className={`conversation-row-shell ${selected?.id === c.id ? 'selected' : ''} ${c.isPinned ? 'pinned' : ''}`}
-                >
-                  <button
-                    onClick={() => select(c)}
-                    className={`conversation-row ${selected?.id === c.id ? 'active' : ''}`}
-                  >
-                    <span className="conversation-text">
-                      <span className="conversation-title">
-                        {c.isPinned && (
-                          <span className="conversation-pin" title="已置顶">
-                            <Pin size={12} fill="currentColor" />
-                          </span>
-                        )}
-                        <span className="conversation-name">
-                          <HighlightText text={c.title} query={query} />
-                        </span>
-                        <time>
-                          {new Date(c.updatedAt).toLocaleDateString('zh-CN', {
-                            month: 'numeric',
-                            day: 'numeric',
-                          })}
-                        </time>
-                      </span>
-                      <span className="preview">
-                        {c.preview ? <HighlightText text={c.preview} query={query} /> : '暂无消息'}
-                      </span>
-                    </span>
-                  </button>
-                  <ActionMenu
-                    label={`会话操作：${c.title}`}
-                    disabled={busy || pinBusy}
-                    actions={[
-                      {
-                        label: c.isPinned ? '取消置顶' : '置顶',
-                        icon: <Pin size={15} />,
-                        onSelect: () => void togglePin(c),
-                      },
-                      {
-                        label: '改名',
-                        icon: <Pencil size={15} />,
-                        onSelect: () => openConversationDialog('rename', c),
-                        opensDialog: true,
-                      },
-                      {
-                        label: '删除',
-                        icon: <Trash2 size={15} />,
-                        onSelect: () => openConversationDialog('delete', c),
-                        danger: true,
-                        opensDialog: true,
-                      },
-                    ]}
-                  />
-                </div>
-              </ConversationContextMenu>
-            ))}
-          {!listLoading && !conversations.items.length && (
-            <div className="list-empty">
-              <MessageSquare size={28} />
-              <p>{!synced ? '暂时无法连接服务' : query ? '没有找到相关会话' : '还没有会话'}</p>
-              <small>
-                {query ? '试试消息内容、批注或文件名' : '新建一个会话，在手机和电脑之间共享内容'}
-              </small>
-              {!synced && <button onClick={() => void refresh().catch(fail)}>重新连接</button>}
-            </div>
-          )}
-        </div>
-        {conversations.totalPages > 1 && (
-          <div className="pagination">
-            <button
-              disabled={page === 1}
-              onClick={() => setPage((p) => p - 1)}
-              aria-label="上一页会话"
-            >
-              <ChevronLeft size={16} />
-            </button>
-            {page} / {conversations.totalPages}
-            <button
-              disabled={page >= conversations.totalPages}
-              onClick={() => setPage((p) => p + 1)}
-              aria-label="下一页会话"
-            >
-              <ChevronRight size={16} />
-            </button>
-          </div>
-        )}
-        <div className="profile">
-          <div className="profile-name">
-            <strong>{session.user.name}</strong>
-            <SyncStatus
-              connected={synced && (!selected || messageConnected)}
-              lastSyncedAt={lastSyncedAt}
-              onRetry={() => {
-                void refresh().catch(fail);
-                void loadMessages();
-              }}
-            />
-          </div>
-          <button
-            className="icon-btn"
-            aria-label="退出登录"
-            onClick={() => void onLogout().catch(fail)}
-          >
-            <LogOut size={17} />
-          </button>
-        </div>
-      </aside>
+      <ConversationSidebar
+        hidden={!!selected || settingsOpen}
+        userName={session.user.name}
+        conversations={conversations}
+        selectedId={selected?.id}
+        listLoading={listLoading}
+        search={search}
+        query={query}
+        page={page}
+        busy={busy}
+        pinBusy={pinBusy}
+        connected={syncConnected}
+        lastSyncedAt={lastSyncedAt}
+        onSearchChange={setSearch}
+        onPageChange={setPage}
+        onSelect={select}
+        onCreateConversation={() => {
+          setName(defaultConversationName());
+          setDialog('create');
+        }}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenFavorites={() => setFavoritesOpen(true)}
+        onOpenFiles={() => setFilesOpen(true)}
+        onTogglePin={(c) => void togglePin(c)}
+        onOpenDialog={openConversationDialog}
+        onRetrySync={() => {
+          void refresh().catch(fail);
+          void loadMessages('reconcile');
+        }}
+        onLogout={() => void onLogout().catch(fail)}
+      />
       <main
         className={`chat-pane ${!selected || settingsOpen ? 'mobile-hidden' : ''}`}
         onDragEnter={(e) => {
@@ -998,13 +899,13 @@ export function WorkspacePage({
                 ]}
               />
             </header>
-            {(!synced || !messageConnected) && (
+            {(!lastSyncOk || !messageConnected) && (
               <div className="chat-connection-state" role="status">
                 连接中断，已有内容仍可查看。
                 <button
                   onClick={() => {
                     void refresh().catch(fail);
-                    void loadMessages();
+                    void loadMessages('reconcile');
                   }}
                 >
                   刷新
@@ -1091,7 +992,7 @@ export function WorkspacePage({
                           : '发送文字、图片或文件，在其他设备上查看。'}
                   </p>
                   {feedError && (
-                    <Button variant="outline" onClick={() => void loadMessages()}>
+                    <Button variant="outline" onClick={() => void loadMessages('reconcile')}>
                       重新加载
                     </Button>
                   )}
@@ -1120,135 +1021,32 @@ export function WorkspacePage({
                     void action(() => messagesApi.update(token, m.id, { isStarred: !m.isStarred }))
                   }
                   onEdit={editMessage}
-                  onDelete={(m) => void action(() => messagesApi.remove(token, m.id))}
+                  onDelete={(m) => void action(() => messagesApi.remove(token, m.id), m.id)}
                 />
               )}
             </div>
-            <form
-              className={`composer ${dragging ? 'composer-dragging' : ''}`}
-              onSubmit={send}
-              onPaste={(e) => {
-                const files = Array.from(e.clipboardData.files);
-                if (files.length) {
-                  e.preventDefault();
-                  attachFiles(files);
-                }
-              }}
-            >
-              {sendNotices[selected.id] && (
-                <section
-                  className={`composer-notice ${sendNotices[selected.id].failed ? 'composer-notice-error' : ''}`}
-                  role={sendNotices[selected.id].failed ? 'alert' : 'status'}
-                >
-                  <p>{sendNotices[selected.id].text}</p>
-                  <button
-                    type="button"
-                    aria-label="关闭发送提示"
-                    onClick={() => clearSendNotice(selected.id)}
-                  >
-                    <X size={14} />
-                  </button>
-                </section>
-              )}
-              {dragging && <p className="attachment-drop-hint">松开即可添加附件</p>}
-              <AttachmentDrafts
-                files={attachments[selected.id] ?? []}
-                disabled={busy}
-                remove={(file) =>
-                  setAttachments((current) => ({
-                    ...current,
-                    [selected.id]: (current[selected.id] ?? []).filter((f) => f !== file),
-                  }))
-                }
-              />
-              <input
-                ref={fileInput}
-                type="file"
-                multiple
-                hidden
-                aria-label="选择附件文件"
-                onChange={(e) => {
-                  attachFiles(Array.from(e.target.files ?? []));
-                  e.target.value = '';
-                }}
-              />
-              <input
-                ref={imageInput}
-                type="file"
-                accept="image/*"
-                multiple
-                hidden
-                aria-label="选择图片文件"
-                onChange={(e) => {
-                  attachFiles(Array.from(e.target.files ?? []));
-                  e.target.value = '';
-                }}
-              />
-              <div className="composer-entry">
-                <AttachmentMenu
-                  disabled={busy || (attachments[selected.id]?.length ?? 0) >= 5}
-                  onFiles={() => fileInput.current?.click()}
-                  onImages={() => imageInput.current?.click()}
-                />
-                <textarea
-                  ref={messageInput}
-                  aria-label="消息内容"
-                  placeholder="输入消息…"
-                  rows={1}
-                  maxLength={50000}
-                  value={drafts[selected.id] ?? ''}
-                  disabled={busy}
-                  onChange={(e) => {
-                    setDrafts((d) => ({ ...d, [selected.id]: e.target.value }));
-                  }}
-                  onKeyDown={(e) => {
-                    const desktop = window.matchMedia(
-                      '(min-width: 768px) and (pointer: fine)',
-                    ).matches;
-                    if (
-                      e.key === 'Enter' &&
-                      !e.shiftKey &&
-                      !e.altKey &&
-                      !e.repeat &&
-                      !e.nativeEvent.isComposing &&
-                      e.nativeEvent.keyCode !== 229 &&
-                      (desktop || e.metaKey || e.ctrlKey)
-                    ) {
-                      e.preventDefault();
-                      void send(e);
-                    }
-                  }}
-                />
-                <Button
-                  className="composer-send"
-                  aria-label={busy ? '发送中' : '发送'}
-                  title="发送；电脑端 Enter 发送、Shift + Enter 换行"
-                  disabled={
-                    busy || (!drafts[selected.id]?.trim() && !attachments[selected.id]?.length)
-                  }
-                  type="submit"
-                >
-                  <Send size={22} />
-                </Button>
-              </div>
-              {uploadProgress !== null && (
-                <section className="attachment-upload-progress" role="status" aria-live="polite">
-                  <progress max={100} value={uploadProgress.percent} aria-label="附件上传进度" />
-                  <span>
-                    {uploadProgress.percent < 100
-                      ? `上传中 ${uploadProgress.percent}% · ${formatBytes(uploadProgress.loaded)} / ${formatBytes(uploadProgress.total)} · ${formatBytes(uploadProgress.bytesPerSecond)}/秒${uploadProgress.remainingSeconds === null ? '' : ` · 还需 ${Math.max(1, Math.ceil(uploadProgress.remainingSeconds))} 秒`}`
-                      : '正在保存附件…'}
-                  </span>
-                  <button
-                    type="button"
-                    className="attachment-upload-cancel"
-                    onClick={() => uploadController.current?.abort()}
-                  >
-                    取消上传
-                  </button>
-                </section>
-              )}
-            </form>
+            <MessageComposer
+              dragging={dragging}
+              busy={busy}
+              draft={drafts[selected.id] ?? ''}
+              files={attachments[selected.id] ?? []}
+              notice={sendNotices[selected.id]}
+              uploadProgress={uploadProgress}
+              messageInput={messageInput}
+              fileInput={fileInput}
+              imageInput={imageInput}
+              onSubmit={(e) => void send(e)}
+              onDraftChange={(value) => setDrafts((d) => ({ ...d, [selected.id]: value }))}
+              onAttachFiles={attachFiles}
+              onRemoveFile={(file) =>
+                setAttachments((current) => ({
+                  ...current,
+                  [selected.id]: (current[selected.id] ?? []).filter((f) => f !== file),
+                }))
+              }
+              onClearNotice={() => clearSendNotice(selected.id)}
+              onCancelUpload={() => uploadController.current?.abort()}
+            />
           </>
         ) : (
           <div className="welcome-space">
@@ -1295,7 +1093,7 @@ export function WorkspacePage({
           onSaved={(updated) => {
             feed.history.updateMessage(updated);
             setAnnotationRevision((value) => value + 1);
-            void loadMessages();
+            void loadMessages('latest');
             void refresh().catch(fail);
           }}
         />
@@ -1305,6 +1103,8 @@ export function WorkspacePage({
           onOpenConversation={(m) => void openFavorite(m)}
           onAnnotate={setAnnotationTarget}
           annotationRevision={annotationRevision}
+          sseHealthy={sseHealthy}
+          syncRevision={favoritesSyncRevision}
           currentDeviceId={session.user.deviceId}
           token={token}
           onClose={() => setFavoritesOpen(false)}
@@ -1314,6 +1114,7 @@ export function WorkspacePage({
       {filesOpen && (
         <FilesPanel
           token={token}
+          syncRevision={filesSyncRevision}
           onClose={() => setFilesOpen(false)}
           onOpenConversation={(conversationId) => {
             void conversationsApi
@@ -1326,6 +1127,11 @@ export function WorkspacePage({
               })
               .catch(fail);
           }}
+          onFileDeleted={(file) => {
+            if (selected?.id === file.conversationId) {
+              void loadMessages('latest');
+            }
+          }}
           onExpired={onExpired}
         />
       )}
@@ -1333,6 +1139,7 @@ export function WorkspacePage({
         <SettingsPanel
           embedded={compact}
           accountName={session.user.name}
+          syncRevision={settingsSyncRevision}
           onLogout={onLogout}
           onNavigationLockChanged={setSettingsLocked}
           onShowDevices={() => {
@@ -1347,12 +1154,32 @@ export function WorkspacePage({
           onClose={() => setSettingsOpen(false)}
           onExpired={onExpired}
           onReset={() => {
+            mediaCache.clear();
             localStorage.removeItem(`syncbox-device-${session.user.id}`);
             onExpired();
           }}
         />
       )}
-      {dialog && (
+      {dialog === 'devices' && (
+        <DevicesDialog
+          devices={devices}
+          currentDeviceId={session.user.deviceId}
+          deviceEdit={deviceEdit}
+          deviceName={deviceName}
+          busy={busy}
+          onRefresh={() => void showDevices()}
+          onClose={() => setDialog(null)}
+          onStartEdit={(d) => {
+            setDeviceEdit(d.id);
+            setDeviceName(d.name);
+          }}
+          onDeviceNameChange={setDeviceName}
+          onSaveEdit={() => void saveDevice()}
+          onCancelEdit={() => setDeviceEdit(null)}
+          onRequestRemove={setDeviceToRemove}
+        />
+      )}
+      {dialog && dialog !== 'devices' && (
         <div className="modal-backdrop" onClick={() => !busy && setDialog(null)}>
           <section
             role="dialog"
@@ -1370,149 +1197,54 @@ export function WorkspacePage({
                   ? '新建会话'
                   : dialog === 'rename'
                     ? '重命名会话'
-                    : dialog === 'delete'
-                      ? '删除会话？'
-                      : '我的设备'}
+                    : '删除会话？'}
               </h2>
-              {dialog === 'devices' && (
-                <button
-                  className="device-refresh-button"
-                  type="button"
-                  onClick={() => void showDevices()}
-                  disabled={busy}
-                  title="刷新设备状态"
-                >
-                  <RefreshCw size={15} />
-                  刷新
-                </button>
-              )}
               <button aria-label="关闭弹窗" onClick={() => setDialog(null)} disabled={busy}>
                 <X size={20} />
               </button>
             </div>
-            {dialog === 'devices' ? (
-              <div className="device-list">
-                {devices.map((d) => (
-                  <div key={d.id}>
-                    <span className="device-info">
-                      {deviceEdit === d.id ? (
-                        <input
-                          autoFocus
-                          value={deviceName}
-                          maxLength={80}
-                          disabled={busy}
-                          aria-label="设备名称"
-                          onChange={(e) => setDeviceName(e.target.value)}
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
-                              e.preventDefault();
-                              void saveDevice();
-                            }
-                          }}
-                        />
-                      ) : (
-                        <strong>
-                          {d.name}
-                          {d.id === session.user.deviceId && (
-                            <small className="current-device">当前设备</small>
-                          )}
-                          <small className="device-list-id">ID：{d.id}</small>
-                        </strong>
-                      )}
-                      <small>
-                        {d.platform} ·{' '}
-                        <span className={`device-presence ${d.online ? 'online' : 'offline'}`}>
-                          <i aria-hidden="true" />
-                          {d.online ? '在线' : '离线'}
-                        </span>{' '}
-                        · 最近活动 {new Date(d.lastSeenAt).toLocaleString('zh-CN')}
-                      </small>
-                    </span>
-                    {d.id === session.user.deviceId ? (
-                      deviceEdit === d.id ? (
-                        <>
-                          <button
-                            className="device-edit-button"
-                            disabled={busy || !deviceName.trim()}
-                            onClick={() => void saveDevice()}
-                          >
-                            {busy ? '保存中…' : '保存'}
-                          </button>
-                          <button
-                            className="device-edit-button"
-                            disabled={busy}
-                            onClick={() => setDeviceEdit(null)}
-                          >
-                            取消
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          className="device-edit-button"
-                          onClick={() => {
-                            setDeviceEdit(d.id);
-                            setDeviceName(d.name);
-                          }}
-                        >
-                          改名
-                        </button>
-                      )
-                    ) : (
-                      <button
-                        className="device-edit-button device-remove-button"
-                        disabled={busy}
-                        onClick={() => setDeviceToRemove(d)}
-                      >
-                        移除
-                      </button>
-                    )}
-                  </div>
-                ))}
+            <form onSubmit={saveDialog}>
+              {dialog === 'delete' ? (
+                <p className="my-5 text-sm leading-6 text-muted-foreground">
+                  “{dialogTarget?.title}
+                  ”中的消息和附件也会一并删除，所有设备同步移除，且无法恢复。
+                </p>
+              ) : (
+                <label className="field-label my-6">
+                  会话名称
+                  <input
+                    autoFocus
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="例如：临时传输、文案收藏"
+                    maxLength={80}
+                    required
+                  />
+                </label>
+              )}
+              <div className="flex justify-end gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setDialog(null)}
+                  disabled={busy}
+                >
+                  取消
+                </Button>
+                <Button
+                  variant={dialog === 'delete' ? 'destructive' : 'default'}
+                  disabled={busy || (dialog !== 'delete' && !name.trim())}
+                >
+                  {busy
+                    ? '处理中…'
+                    : dialog === 'delete'
+                      ? '删除会话'
+                      : dialog === 'create'
+                        ? '创建会话'
+                        : '保存名称'}
+                </Button>
               </div>
-            ) : (
-              <form onSubmit={saveDialog}>
-                {dialog === 'delete' ? (
-                  <p className="my-5 text-sm leading-6 text-muted-foreground">
-                    “{dialogTarget?.title}
-                    ”中的消息和附件也会一并删除，所有设备同步移除，且无法恢复。
-                  </p>
-                ) : (
-                  <label className="field-label my-6">
-                    会话名称
-                    <input
-                      autoFocus
-                      value={name}
-                      onChange={(e) => setName(e.target.value)}
-                      placeholder="例如：临时传输、文案收藏"
-                      maxLength={80}
-                      required
-                    />
-                  </label>
-                )}
-                <div className="flex justify-end gap-3">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setDialog(null)}
-                    disabled={busy}
-                  >
-                    取消
-                  </Button>
-                  <Button
-                    variant={dialog === 'delete' ? 'destructive' : 'default'}
-                    disabled={busy || (dialog !== 'delete' && !name.trim())}
-                  >
-                    {busy
-                      ? '处理中…'
-                      : dialog === 'delete'
-                        ? '删除会话'
-                        : dialog === 'create'
-                          ? '创建会话'
-                          : '保存名称'}
-                  </Button>
-                </div>
-              </form>
-            )}
+            </form>
           </section>
         </div>
       )}

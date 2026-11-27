@@ -50,8 +50,8 @@ class PageResult<T> {
     (json['items'] as List)
         .map((v) => parse(v as Map<String, dynamic>))
         .toList(),
-    json['page'] as int,
-    json['totalPages'] as int,
+    json['page'] as int? ?? 1,
+    json['totalPages'] as int? ?? 0,
     total: json['total'] as int?,
     hasMore: json['hasMore'] as bool?,
     nextCursor: json['nextCursor'] as String?,
