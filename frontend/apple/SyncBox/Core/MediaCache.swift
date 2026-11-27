@@ -80,7 +80,7 @@ final class MediaCache: @unchecked Sendable {
     }
 
     func invalidatePath(_ pathPrefix: String) {
-        let matches: [String] = lock.withLock {
+        lock.withLock {
             let selected = keys.filter { key in
                 guard let idx = key.lastIndex(of: "|") else { return false }
                 let path = String(key[key.index(after: idx)...])
@@ -90,9 +90,7 @@ final class MediaCache: @unchecked Sendable {
                 keys.remove(key)
                 cache.removeObject(forKey: key as NSString)
             }
-            return selected
         }
-        _ = matches
     }
 
     func clear() {
