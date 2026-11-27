@@ -1,11 +1,27 @@
 #include "flutter_window.h"
+#include "utils.h"
+#include "clipboard_image.h"
 
 #include <optional>
+#include <commctrl.h>
+#include <utility>
 #include <shellapi.h>
 #include <flutter/standard_method_codec.h>
 #include <cstdint>
 
 #include "flutter/generated_plugin_registrant.h"
+
+namespace {
+// Explorer drops onto the Flutter child HWND, which owns the client area.
+LRESULT CALLBACK DropProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam,
+                          UINT_PTR id, DWORD_PTR parent) {
+  if (message == WM_DROPFILES) {
+    return SendMessageW(reinterpret_cast<HWND>(parent), message, wparam, lparam);
+  }
+  if (message == WM_NCDESTROY) RemoveWindowSubclass(hwnd, DropProc, id);
+  return DefSubclassProc(hwnd, message, wparam, lparam);
+}
+}  // namespace
 
 FlutterWindow::FlutterWindow(const flutter::DartProject& project)
     : project_(project) {}
@@ -48,6 +64,18 @@ bool FlutterWindow::OnCreate() {
   });
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
+  drop_channel_ = std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+      flutter_controller_->engine()->messenger(), "syncbox/file-drop",
+      &flutter::StandardMethodCodec::GetInstance());
+  drop_channel_->SetMethodCallHandler([this](const auto& call, auto result) {
+    if (call.method_name() == "readClipboard") ReadClipboardImage(GetHandle(), *result);
+    else result->NotImplemented();
+  });
+  HWND drop_view = flutter_controller_->view()->GetNativeWindow();
+  if (SetWindowSubclass(drop_view, DropProc, 1, reinterpret_cast<DWORD_PTR>(GetHandle()))) {
+    DragAcceptFiles(drop_view, TRUE);
+  }
+
   flutter_controller_->engine()->SetNextFrameCallback([&]() {
     this->Show();
   });
@@ -61,6 +89,7 @@ bool FlutterWindow::OnCreate() {
 }
 
 void FlutterWindow::OnDestroy() {
+  drop_channel_.reset();
   links_channel_ = nullptr;
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
@@ -84,6 +113,29 @@ FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
   }
 
   switch (message) {
+    case WM_DROPFILES: {
+      auto drop = reinterpret_cast<HDROP>(wparam);
+      POINT point{};
+      const bool in_client = DragQueryPoint(drop, &point) != FALSE;
+      flutter::EncodableList paths;
+      const UINT count = DragQueryFileW(drop, 0xFFFFFFFF, nullptr, 0);
+      // Six paths suffice to report that the five-file limit was exceeded.
+      for (UINT i = 0; i < count && i < 6; ++i) {
+        const UINT length = DragQueryFileW(drop, i, nullptr, 0);
+        std::vector<wchar_t> path(length + 1);
+        if (DragQueryFileW(drop, i, path.data(), length + 1)) {
+          paths.emplace_back(Utf8FromUtf16(path.data()));
+        }
+      }
+      DragFinish(drop);
+      if (drop_channel_ && in_client && !paths.empty()) {
+        flutter::EncodableList args{flutter::EncodableValue(static_cast<int>(point.x)),
+                                    flutter::EncodableValue(static_cast<int>(point.y)),
+                                    flutter::EncodableValue(std::move(paths))};
+        drop_channel_->InvokeMethod("drop", std::make_unique<flutter::EncodableValue>(std::move(args)));
+      }
+      return 0;
+    }
     case WM_FONTCHANGE:
       flutter_controller_->engine()->ReloadSystemFonts();
       break;

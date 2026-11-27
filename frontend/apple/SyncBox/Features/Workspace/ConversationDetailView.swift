@@ -22,10 +22,14 @@ struct ConversationDetailView: View {
     @State private var deletingImage: Message?
     @State private var copiedID: String?
     @State private var choosingImage = false
+    #if os(macOS)
+    @State private var fileDropTargeted = false
+    #endif
     @State private var choosingFiles = false
     @State private var searchOpen = false
     @FocusState private var searchFocused: Bool
     #if os(iOS)
+    @State private var choosingPhoto = false
     @State private var photo: PhotosPickerItem?
     #endif
 
@@ -91,10 +95,11 @@ struct ConversationDetailView: View {
                 HStack(alignment: .bottom, spacing: 10) {
                     Menu {
                         Button { choosingFiles = true } label: { Label("文件", systemImage: "folder") }.disabled(model.imageDrafts[conversation.id] != nil)
-                        Button { choosingImage = true } label: { Label("图片", systemImage: "photo") }.disabled(model.imageDrafts[conversation.id] != nil || !(model.fileDrafts[conversation.id] ?? []).isEmpty)
                         #if os(iOS)
-                        PhotosPicker(selection: $photo, matching: .images, preferredItemEncoding: .compatible) { Label("照片图库", systemImage: "photo.on.rectangle") }
+                        Button { choosingPhoto = true } label: { Label("从相册选择", systemImage: "photo.on.rectangle") }
                             .disabled(model.imageDrafts[conversation.id] != nil || !(model.fileDrafts[conversation.id] ?? []).isEmpty)
+                        #else
+                        Button { choosingImage = true } label: { Label("图片", systemImage: "photo") }.disabled(model.imageDrafts[conversation.id] != nil || !(model.fileDrafts[conversation.id] ?? []).isEmpty)
                         #endif
                         Text("最多 5 个附件，合计 20 MB")
                     } label: { Image(systemName: "paperclip").font(.title3).frame(width: 36, height: 40) }
@@ -133,21 +138,21 @@ struct ConversationDetailView: View {
                 if model.draft.count > 50_000 { Text("正文最多 50,000 字").font(.caption).foregroundStyle(.red) }
             }.padding(.horizontal, 12).padding(.vertical, 8).foregroundStyle(ChatStyle.ink).background(ChatStyle.background)
         }
+        #if os(macOS)
+        .dropDestination(for: URL.self) { urls, _ in
+            guard !urls.isEmpty, urls.allSatisfy(\.isFileURL), !model.sending else { return false }
+            do { try addFiles(urls); return true }
+            catch { model.error = userFacingError(error); return false }
+        } isTargeted: { fileDropTargeted = $0 }
+        .overlay { if fileDropTargeted && !model.sending {
+            RoundedRectangle(cornerRadius: 12).strokeBorder(Color.accentColor, lineWidth: 2)
+                .allowsHitTesting(false)
+        } }
+        #endif
         .fileImporter(isPresented: $choosingFiles, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             do {
                 let urls = try result.get()
-                var files = model.fileDrafts[conversation.id] ?? []
-                guard files.count + urls.count <= 5 else { throw APIError(message: "最多选择 5 个附件") }
-                for url in urls {
-                    let accessed = url.startAccessingSecurityScopedResource()
-                    defer { if accessed { url.stopAccessingSecurityScopedResource() } }
-                    let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
-                    guard size > 0, size + files.reduce(0, { $0 + $1.data.count }) <= 20 * 1024 * 1024 else { throw APIError(message: "请选择非空文件，合计不超过 20 MB") }
-                    let data = try Data(contentsOf: url)
-                    guard !data.isEmpty, data.count + files.reduce(0, { $0 + $1.data.count }) <= 20 * 1024 * 1024 else { throw APIError(message: "附件合计不能超过 20 MB") }
-                    files.append(PendingFile(name: url.lastPathComponent, data: data))
-                }
-                model.fileDrafts[conversation.id] = files
+                try addFiles(urls)
             } catch { model.error = userFacingError(error) }
         }
         .fileImporter(isPresented: $choosingImage, allowedContentTypes: [.image]) { result in
@@ -161,6 +166,7 @@ struct ConversationDetailView: View {
             } catch { model.error = userFacingError(error) }
         }
         #if os(iOS)
+        .photosPicker(isPresented: $choosingPhoto, selection: $photo, matching: .images, preferredItemEncoding: .compatible)
         .onChange(of: photo) { _, item in
             let id = conversation.id
             Task {
@@ -236,6 +242,25 @@ struct ConversationDetailView: View {
                 deletingImage = nil
             }
         } message: { Text("图片会从消息中移除，消息文字会保留。") }
+    }
+
+    private func addFiles(_ urls: [URL]) throws {
+        guard !model.sending else { return }
+        guard model.imageDrafts[conversation.id] == nil else { throw APIError(message: "请先移除待发送的图片") }
+        var files = model.fileDrafts[conversation.id] ?? []
+        guard files.count + urls.count <= 5 else { throw APIError(message: "最多选择 5 个附件") }
+        for url in urls {
+            let accessed = url.startAccessingSecurityScopedResource()
+            defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+            let values = try url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey])
+            guard values.isRegularFile == true else { throw APIError(message: "请选择文件，不能添加文件夹") }
+            let size = values.fileSize ?? 0
+            guard size > 0, size + files.reduce(0, { $0 + $1.data.count }) <= 20 * 1024 * 1024 else { throw APIError(message: "请选择非空文件，合计不超过 20 MB") }
+            let data = try Data(contentsOf: url)
+            guard !data.isEmpty, data.count + files.reduce(0, { $0 + $1.data.count }) <= 20 * 1024 * 1024 else { throw APIError(message: "附件合计不能超过 20 MB") }
+            files.append(PendingFile(name: url.lastPathComponent, data: data))
+        }
+        model.fileDrafts[conversation.id] = files
     }
 
     private var composerHint: String {

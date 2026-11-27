@@ -903,7 +903,44 @@ export function WorkspacePage({
           </button>
         </div>
       </aside>
-      <main className={`chat-pane ${!selected || settingsOpen ? 'mobile-hidden' : ''}`}>
+      <main
+        className={`chat-pane ${!selected || settingsOpen ? 'mobile-hidden' : ''}`}
+        onDragEnter={(e) => {
+          if (e.dataTransfer.types.includes('Files')) {
+            e.preventDefault();
+            if (!selected || busy) return;
+            dragDepth.current++;
+            setDragging(true);
+          }
+        }}
+        onDragOver={(e) => {
+          if (e.dataTransfer.types.includes('Files')) {
+            e.preventDefault();
+            e.dataTransfer.dropEffect = !selected || busy ? 'none' : 'copy';
+          }
+        }}
+        onDragLeave={(e) => {
+          e.preventDefault();
+          dragDepth.current--;
+          if (dragDepth.current <= 0) {
+            dragDepth.current = 0;
+            setDragging(false);
+          }
+        }}
+        onDrop={(e) => {
+          if (!e.dataTransfer.types.includes('Files')) return;
+          e.preventDefault();
+          dragDepth.current = 0;
+          setDragging(false);
+          if (
+            Array.from(e.dataTransfer.items).some((item) => item.webkitGetAsEntry?.()?.isDirectory)
+          ) {
+            setError('请选择文件，不能添加文件夹。');
+          } else {
+            attachFiles(Array.from(e.dataTransfer.files));
+          }
+        }}
+      >
         {selected ? (
           <>
             <header className="chat-header">
@@ -1090,33 +1127,6 @@ export function WorkspacePage({
             <form
               className={`composer ${dragging ? 'composer-dragging' : ''}`}
               onSubmit={send}
-              onDragEnter={(e) => {
-                if (e.dataTransfer.types.includes('Files')) {
-                  e.preventDefault();
-                  dragDepth.current++;
-                  setDragging(true);
-                }
-              }}
-              onDragOver={(e) => {
-                if (e.dataTransfer.types.includes('Files')) {
-                  e.preventDefault();
-                  e.dataTransfer.dropEffect = busy ? 'none' : 'copy';
-                }
-              }}
-              onDragLeave={(e) => {
-                e.preventDefault();
-                dragDepth.current--;
-                if (dragDepth.current <= 0) {
-                  dragDepth.current = 0;
-                  setDragging(false);
-                }
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                dragDepth.current = 0;
-                setDragging(false);
-                attachFiles(Array.from(e.dataTransfer.files));
-              }}
               onPaste={(e) => {
                 const files = Array.from(e.clipboardData.files);
                 if (files.length) {

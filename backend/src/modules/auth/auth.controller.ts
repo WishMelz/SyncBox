@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Header, HttpCode, Post, Req, UseGuards } from '@nestjs/common';
-import { Throttle } from '@nestjs/throttler';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { AuthService, type CurrentUser } from './auth.service';
 import { AuthGuard, User, type AuthRequest } from './auth.guard';
 import { LoginDto, SetupDto } from './auth.dto';
@@ -16,6 +16,7 @@ export class AuthController {
 
   @Post('setup')
   @Header('Cache-Control', 'no-store')
+  @UseGuards(ThrottlerGuard)
   @Throttle({ default: { limit: 5, ttl: 60000 } })
   setup(@Body() dto: SetupDto) {
     return this.auth.setup(dto);
@@ -24,6 +25,7 @@ export class AuthController {
   @Post('login')
   @HttpCode(200)
   @Header('Cache-Control', 'no-store')
+  @UseGuards(ThrottlerGuard)
   @Throttle({ default: { limit: 10, ttl: 60000 } })
   login(@Body() dto: LoginDto) {
     return this.auth.login(dto);

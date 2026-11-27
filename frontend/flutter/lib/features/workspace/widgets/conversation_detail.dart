@@ -1,9 +1,12 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:file_selector/file_selector.dart';
+import 'package:image_picker/image_picker.dart' show ImagePicker, ImageSource;
 
 import '../../../models/message.dart';
+import '../../../platform/windows_file_drop.dart';
 import '../workspace_controller.dart';
 import 'message_history_feed.dart';
 import 'message_card.dart';
@@ -36,6 +39,8 @@ class _ConversationDetailState extends State<ConversationDetail> {
   late final TextEditingController _search;
   late final FocusNode _searchFocus;
   Timer? _searchTimer;
+  StreamSubscription<WindowFileDrop>? _drops;
+  bool _addingFiles = false;
   bool _searchOpen = false;
   @override
   void initState() {
@@ -45,11 +50,13 @@ class _ConversationDetailState extends State<ConversationDetail> {
     );
     _search = TextEditingController(text: widget.controller.messageSearch);
     _searchFocus = FocusNode();
+    if (Platform.isWindows) _drops = windowsFileDrops.listen(_handleDrop);
   }
 
   @override
   void dispose() {
     _searchTimer?.cancel();
+    _drops?.cancel();
     _text.dispose();
     _search.dispose();
     _searchFocus.dispose();
@@ -93,23 +100,52 @@ class _ConversationDetailState extends State<ConversationDetail> {
     }
   }
 
-  Future<void> chooseFiles() async {
+  void _handleDrop(WindowFileDrop event) {
+    if (!mounted || ModalRoute.of(context)?.isCurrent != true) return;
+    final box = context.findRenderObject();
+    if (box is! RenderBox || !box.hasSize) return;
+    final point = box.globalToLocal(
+      event.pixels / View.of(context).devicePixelRatio,
+    );
+    if (!(Offset.zero & box.size).contains(point)) return;
+    chooseFiles(dropped: event.paths);
+  }
+
+  Future<void> chooseFiles({List<String>? dropped}) async {
     final c = widget.controller;
     final id = c.selected!.id;
+    if (c.busy || _addingFiles) return;
+    _addingFiles = true;
     try {
-      final picked = await openFiles();
+      final picked = dropped == null
+          ? await openFiles()
+          : dropped.map((path) => XFile(path)).toList();
       if (picked.isEmpty || !mounted) return;
-      final files = [...?c.fileDrafts[id], ...picked];
+      if (c.imageDrafts[id] != null) throw const FormatException('请先移除待发送的图片');
+      final previous = c.fileDrafts[id];
+      final files = [...?previous, ...picked];
+      if (files.length > 5) throw const FormatException('最多选择 5 个附件');
       var size = 0;
       for (final file in files) {
+        if (dropped != null &&
+            await FileSystemEntity.type(file.path) !=
+                FileSystemEntityType.file) {
+          throw const FormatException('请选择可读取的文件，不能添加文件夹');
+        }
         final length = await file.length();
         if (length == 0) throw const FormatException('不能发送空文件');
         size += length;
       }
-      if (files.length > 5 || size > 20 * 1024 * 1024) {
+      if (size > 20 * 1024 * 1024) {
         throw const FormatException('最多 5 个附件，合计不超过 20 MB');
       }
-      if (mounted) c.attachFiles(id, files);
+      if (mounted &&
+          !c.busy &&
+          c.selected?.id == id &&
+          identical(previous, c.fileDrafts[id]) &&
+          c.imageDrafts[id] == null) {
+        c.attachFiles(id, files);
+      }
     } on FormatException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -120,6 +156,41 @@ class _ConversationDetailState extends State<ConversationDetail> {
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('无法添加附件，请重试。')));
       }
+    } finally {
+      _addingFiles = false;
+    }
+  }
+
+  Future<void> pasteIntoComposer(VoidCallback pasteText) async {
+    final c = widget.controller;
+    final id = c.selected?.id;
+    if (id == null || c.busy) return;
+    try {
+      final payload = await const MethodChannel('syncbox/file-drop')
+          .invokeMethod<Object>('readClipboard');
+      if (!mounted || c.selected?.id != id || c.busy) return;
+      if (payload is Uint8List) {
+        if (c.imageDrafts[id] != null ||
+            (c.fileDrafts[id]?.isNotEmpty ?? false)) {
+          throw const FormatException('请先发送或移除待发送的图片和附件');
+        }
+        c.attachImage(id, payload);
+      } else if (payload is List) {
+        await chooseFiles(dropped: payload.cast<String>());
+      } else {
+        pasteText();
+      }
+    } catch (error) {
+      if (!mounted) return;
+      final message = error is FormatException
+          ? error.message
+          : error is PlatformException && error.code == 'size'
+          ? '图片不能超过 8 MB'
+          : error is PlatformException && error.code == 'dimensions'
+          ? '图片像素太大，无法粘贴'
+          : '无法读取剪贴板，请重试';
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(message)));
     }
   }
 
@@ -127,21 +198,39 @@ class _ConversationDetailState extends State<ConversationDetail> {
     final c = widget.controller;
     final id = c.selected!.id;
     try {
-      final file = await openFile(
-        acceptedTypeGroups: [
-          const XTypeGroup(
-            label: '图片',
-            extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
-            mimeTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/gif'],
-          ),
-        ],
-      );
+      final file = Platform.isAndroid
+          ? await ImagePicker().pickImage(
+              source: ImageSource.gallery,
+              maxWidth: 4000,
+              maxHeight: 4000,
+              imageQuality: 90,
+              requestFullMetadata: false,
+            )
+          : await openFile(
+              acceptedTypeGroups: [
+                const XTypeGroup(
+                  label: '图片',
+                  extensions: ['jpg', 'jpeg', 'png', 'webp', 'gif'],
+                  mimeTypes: [
+                    'image/jpeg',
+                    'image/png',
+                    'image/webp',
+                    'image/gif',
+                  ],
+                ),
+              ],
+            );
       if (file == null || !mounted) return;
       if (await file.length() > 8 * 1024 * 1024) {
         throw const FormatException('图片不能超过 8 MB');
       }
       final bytes = await file.readAsBytes();
-      if (mounted) c.attachImage(id, bytes);
+      if (mounted &&
+          !c.busy &&
+          c.selected?.id == id &&
+          (c.fileDrafts[id]?.isEmpty ?? true)) {
+        c.attachImage(id, bytes);
+      }
     } on FormatException catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context)
@@ -538,10 +627,10 @@ class _ConversationDetailState extends State<ConversationDetail> {
                           value: 'image',
                           enabled:
                               c.fileDrafts[c.selected!.id]?.isEmpty ?? true,
-                          child: const ListTile(
+                          child: ListTile(
                             contentPadding: EdgeInsets.zero,
-                            leading: Icon(Icons.photo_outlined),
-                            title: Text('选择图片'),
+                            leading: const Icon(Icons.photo_outlined),
+                            title: Text(Platform.isAndroid ? '从相册选择' : '选择图片'),
                           ),
                         ),
                         PopupMenuItem(
@@ -579,23 +668,64 @@ class _ConversationDetailState extends State<ConversationDetail> {
                           }
                           return KeyEventResult.ignored;
                         },
-                        child: TextField(
-                          controller: _text,
-                          enabled: !c.busy,
-                          minLines: 1,
-                          maxLines: shortViewport ? 2 : 5,
-                          maxLength: 50000,
-                          onChanged: (value) =>
-                              c.drafts[c.selected!.id] = value,
-                          decoration: const InputDecoration(
-                            hintText: '发送文案或链接…',
-                            counterText: '',
-                            filled: true,
-                            fillColor: Colors.white,
-                            border: InputBorder.none,
-                            enabledBorder: InputBorder.none,
-                            focusedBorder: InputBorder.none,
-                            contentPadding: EdgeInsets.symmetric(vertical: 10),
+                        child: Actions(
+                          actions: {
+                            if (defaultTargetPlatform == TargetPlatform.windows)
+                              PasteTextIntent: _ComposerPasteAction(
+                                pasteIntoComposer,
+                              ),
+                          },
+                          child: TextField(
+                            contextMenuBuilder: (context, editor) {
+                              if (defaultTargetPlatform !=
+                                  TargetPlatform.windows) {
+                                return AdaptiveTextSelectionToolbar.editableText(
+                                  editableTextState: editor,
+                                );
+                              }
+                              return AdaptiveTextSelectionToolbar.buttonItems(
+                                anchors: editor.contextMenuAnchors,
+                                buttonItems: [
+                                  ...editor.contextMenuButtonItems.where(
+                                    (button) =>
+                                        button.type !=
+                                        ContextMenuButtonType.paste,
+                                  ),
+                                  ContextMenuButtonItem(
+                                    type: ContextMenuButtonType.paste,
+                                    onPressed: () {
+                                      editor.hideToolbar();
+                                      pasteIntoComposer(() {
+                                        if (editor.mounted) {
+                                          editor.pasteText(
+                                            SelectionChangedCause.toolbar,
+                                          );
+                                        }
+                                      });
+                                    },
+                                  ),
+                                ],
+                              );
+                            },
+                            controller: _text,
+                            enabled: !c.busy,
+                            minLines: 1,
+                            maxLines: shortViewport ? 2 : 5,
+                            maxLength: 50000,
+                            onChanged: (value) =>
+                                c.drafts[c.selected!.id] = value,
+                            decoration: const InputDecoration(
+                              hintText: '发送文案或链接…',
+                              counterText: '',
+                              filled: true,
+                              fillColor: Colors.white,
+                              border: InputBorder.none,
+                              enabledBorder: InputBorder.none,
+                              focusedBorder: InputBorder.none,
+                              contentPadding: EdgeInsets.symmetric(
+                                vertical: 10,
+                              ),
+                            ),
                           ),
                         ),
                       ),
@@ -614,5 +744,15 @@ class _ConversationDetailState extends State<ConversationDetail> {
         ),
       ),
     );
+  }
+}
+
+class _ComposerPasteAction extends Action<PasteTextIntent> {
+  _ComposerPasteAction(this.paste);
+  final Future<void> Function(VoidCallback pasteText) paste;
+  @override
+  void invoke(PasteTextIntent intent) {
+    final fallback = callingAction;
+    unawaited(paste(() => fallback?.invoke(intent)));
   }
 }

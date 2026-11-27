@@ -4,9 +4,10 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
-import 'package:file_selector/file_selector.dart';
 
 import 'sync_events.dart';
+
+typedef UploadFile = ({String name, Uint8List bytes});
 
 class ApiException implements Exception {
   const ApiException(this.message, [this.status, this.code]);
@@ -179,7 +180,7 @@ class ApiClient {
 
   Future<void> sendFiles(
     String conversationId,
-    List<XFile> files,
+    List<UploadFile> files,
     String content, [
     String? clientId,
   ]) async {
@@ -188,7 +189,7 @@ class ApiClient {
       throw const ApiException('请选择 1–5 个文件');
     }
     for (final file in files) {
-      final size = await file.length();
+      final size = file.bytes.length;
       if (size == 0) throw const ApiException('不能发送空文件');
       total += size;
     }
@@ -205,7 +206,7 @@ class ApiClient {
       request.files.add(
         http.MultipartFile.fromBytes(
           'files',
-          await file.readAsBytes(),
+          file.bytes,
           // Keep the multipart filename as a fallback for older servers. The
           // UTF-8 names field remains the canonical value.
           filename: file.name,
