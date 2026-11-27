@@ -318,18 +318,19 @@ final class ReliableSyncTests: XCTestCase {
         BackupAndUploadURLProtocol.handler = { _ in
             (201, ["Content-Type": "application/json"], Data("{\"id\":\"m9\",\"content\":\"\",\"createdAt\":\"2026-11-09T00:00:00.000Z\",\"isStarred\":false}".utf8))
         }
-        var seenProgress: [UploadProgress] = []
+        @MainActor final class ProgressBox { var items: [UploadProgress] = [] }
+        let seenProgress = ProgressBox()
         let uploaded = try await api.sendFiles(
             "conv-1",
             files: [PendingFile(name: "test.txt", size: 10, fileURL: tempFile, ownsFile: false)],
             content: "",
             clientId: "cid-1"
         ) { progress in
-            seenProgress.append(progress)
+            seenProgress.items.append(progress)
         }
         XCTAssertEqual(uploaded.id, "m9")
-        XCTAssertEqual(seenProgress.first?.loaded, 0)
-        XCTAssertEqual(seenProgress.last?.percent, 100)
+        XCTAssertEqual(seenProgress.items.first?.loaded, 0)
+        XCTAssertEqual(seenProgress.items.last?.percent, 100)
     }
 
 }
