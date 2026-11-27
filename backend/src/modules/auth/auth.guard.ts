@@ -9,6 +9,7 @@ import { AuthService, type CurrentUser } from './auth.service';
 
 export interface AuthRequest {
   headers: { authorization?: string };
+  ip?: string;
   user: CurrentUser;
   token: string;
 }

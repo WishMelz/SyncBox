@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Download, X } from 'lucide-react';
 import type { Message } from '@/services/messages';
+import { mediaCache, type MediaCacheHandle } from '@/lib/media-cache';
 
 export function MessageImage({
   id,
@@ -27,26 +28,26 @@ export function MessageImage({
   const [retry, setRetry] = useState(0);
   useEffect(() => {
     const abort = new AbortController();
-    let objectURL = '';
+    let handle: MediaCacheHandle | null = null;
     setUrl('');
     setError(false);
-    void fetch(`/api/v1${previewPath ?? `/messages/${encodeURIComponent(id)}/image`}`, {
-      headers: { Authorization: `Bearer ${token}` },
-      signal: abort.signal,
-    })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Image unavailable');
-        const blob = await response.blob();
-        if (abort.signal.aborted) return;
-        objectURL = URL.createObjectURL(blob);
-        setUrl(objectURL);
+    const path = previewPath ?? `/messages/${encodeURIComponent(id)}/image`;
+    void mediaCache
+      .acquire(token, path, abort.signal)
+      .then((acquired) => {
+        if (abort.signal.aborted) {
+          acquired.release();
+          return;
+        }
+        handle = acquired;
+        setUrl(acquired.url);
       })
       .catch(() => {
         if (!abort.signal.aborted) setError(true);
       });
     return () => {
       abort.abort();
-      if (objectURL) URL.revokeObjectURL(objectURL);
+      handle?.release();
     };
   }, [id, token, retry, previewPath]);
   useEffect(() => {

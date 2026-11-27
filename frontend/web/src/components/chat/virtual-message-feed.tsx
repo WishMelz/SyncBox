@@ -143,7 +143,7 @@ export function VirtualMessageFeed({
         scrollerRef={setScroller}
         restoreStateFrom={initialPosition.current.snapshot}
         computeItemKey={(_index, item) => item.id}
-        {...(!initialPosition.current.snapshot
+        {...(!initialPosition.current.snapshot && items.length > 0
           ? { initialTopMostItemIndex: { index: items.length - 1, align: 'end' as const } }
           : {})}
         components={{ Header: HistoryHeader }}

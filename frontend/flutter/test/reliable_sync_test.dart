@@ -29,9 +29,13 @@ class EventClient extends http.BaseClient {
     );
   }
 
-  void invalidate() => bytes.add(
+  void invalidate({
+    String scope = 'messages',
+    String? conversationId,
+    String? messageId,
+  }) => bytes.add(
     utf8.encode(
-      'event: sync\ndata: {"type":"invalidate","scope":"messages"}\n\n',
+      'event: sync\ndata: ${jsonEncode({'type': 'invalidate', 'scope': scope, 'conversationId': ?conversationId, 'messageId': ?messageId})}\n\n',
     ),
   );
   @override
@@ -128,8 +132,8 @@ void main() {
     final refreshing = c.refresh();
     await Future<void>.delayed(const Duration(milliseconds: 10));
     final previousReads = reads;
-    events.last.invalidate();
-    events.last.invalidate();
+    events.last.invalidate(scope: 'conversations');
+    events.last.invalidate(scope: 'conversations');
     await Future<void>.delayed(const Duration(milliseconds: 10));
     await Future<void>.delayed(const Duration(milliseconds: 180));
     pending.complete(http.Response(emptyPage, 200));
@@ -282,6 +286,218 @@ void main() {
     unread = true;
     await c.searchMessages('search');
     expect(marked, 1);
+    c.dispose();
+    api.close();
+  });
+
+  test('routes SSE events by scope, conversationId, and messageId', () async {
+    final events = <EventClient>[];
+    final requests = <String>[];
+    var messageContent = 'initial';
+    var messageDeleted = false;
+    final api = ApiClient(
+      Uri.parse('https://example.com'),
+      client: MockClient((r) async {
+        requests.add('${r.method} ${r.url.path}');
+        if (r.url.path == '/api/v1/conversations') {
+          return http.Response(
+            '{"items":[{"id":"one","title":"One"}],"page":1,"totalPages":1}',
+            200,
+          );
+        }
+        if (r.url.path == '/api/v1/conversations/one/messages') {
+          return http.Response(
+            jsonEncode({
+              'items': messageDeleted
+                  ? []
+                  : [
+                      {
+                        'id': 'm1',
+                        'content': messageContent,
+                        'createdAt': '2026-11-09T00:00:00.000Z',
+                        'isStarred': false,
+                        'conversationId': 'one',
+                      },
+                    ],
+              'page': 1,
+              'totalPages': 1,
+              'total': messageDeleted ? 0 : 1,
+            }),
+            200,
+          );
+        }
+        if (r.url.path == '/api/v1/messages/m1') {
+          if (messageDeleted) {
+            return http.Response('{"message":"not found"}', 404);
+          }
+          return http.Response(
+            jsonEncode({
+              'id': 'm1',
+              'content': messageContent,
+              'createdAt': '2026-11-09T00:00:00.000Z',
+              'isStarred': false,
+              'conversationId': 'one',
+            }),
+            200,
+          );
+        }
+        return http.Response(emptyPage, 200);
+      }),
+      eventClientFactory: () {
+        final client = EventClient();
+        events.add(client);
+        return client;
+      },
+    );
+    final c = WorkspaceController(
+      WorkspaceRepository(api),
+      onExpired: () async {},
+    );
+    await c.select(const Conversation(id: 'one', title: 'One'));
+    c.start();
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    requests.clear();
+
+    // Unrelated conversation message event -> 0 history or detail requests.
+    events.last.invalidate(
+      scope: 'messages',
+      conversationId: 'other',
+      messageId: 'm2',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(requests, isEmpty);
+
+    // Selected conversation messageId update -> 1 GET /messages/m1.
+    messageContent = 'updated';
+    events.last.invalidate(
+      scope: 'messages',
+      conversationId: 'one',
+      messageId: 'm1',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(requests, ['GET /api/v1/messages/m1']);
+    expect(c.messages.single.content, 'updated');
+    requests.clear();
+
+    // Selected conversation messageId deletion -> 404 removes local item.
+    messageDeleted = true;
+    events.last.invalidate(
+      scope: 'messages',
+      conversationId: 'one',
+      messageId: 'm1',
+    );
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(requests, ['GET /api/v1/messages/m1']);
+    expect(c.messages, isEmpty);
+
+    c.dispose();
+    api.close();
+  });
+
+  test('SSE reconnect reconciles loaded history pages', () async {
+    final events = <EventClient>[];
+    final historyQueries = <Map<String, String>>[];
+    var oldMessageDeleted = false;
+    final api = ApiClient(
+      Uri.parse('https://example.com'),
+      client: MockClient((r) async {
+        if (r.url.path == '/api/v1/conversations') {
+          return http.Response(
+            '{"items":[{"id":"one","title":"One"}],"page":1,"totalPages":1}',
+            200,
+          );
+        }
+        if (r.url.path == '/api/v1/conversations/one/messages') {
+          historyQueries.add(r.url.queryParameters);
+          final items = [
+            {
+              'id': 'm2',
+              'content': 'new',
+              'createdAt': '2026-11-09T00:00:01.000Z',
+              'isStarred': false,
+            },
+            if (!oldMessageDeleted)
+              {
+                'id': 'm1',
+                'content': 'old',
+                'createdAt': '2026-11-09T00:00:00.000Z',
+                'isStarred': false,
+              },
+          ];
+          return http.Response(
+            jsonEncode({
+              'items': items,
+              'page': 1,
+              'totalPages': 1,
+              'total': items.length,
+            }),
+            200,
+          );
+        }
+        return http.Response(emptyPage, 200);
+      }),
+      eventClientFactory: () {
+        final client = EventClient();
+        events.add(client);
+        return client;
+      },
+    );
+    final c = WorkspaceController(
+      WorkspaceRepository(api),
+      onExpired: () async {},
+    );
+    await c.select(const Conversation(id: 'one', title: 'One'));
+    c.start();
+    await Future<void>.delayed(const Duration(milliseconds: 200));
+    expect(c.messages.map((m) => m.id), ['m2', 'm1']);
+
+    historyQueries.clear();
+    oldMessageDeleted = true;
+    await events.last.bytes.close();
+    await Future<void>.delayed(const Duration(milliseconds: 3300));
+    expect(events.length, 2);
+    expect(historyQueries.any((q) => q['since'] != null), isTrue);
+    expect(c.messages.map((m) => m.id), ['m2']);
+
+    c.dispose();
+    api.close();
+  });
+
+  test('cancelling upload preserves drafts without setting error', () async {
+    final started = Completer<void>();
+    final gate = Completer<http.Response>();
+    final api = ApiClient(
+      Uri.parse('https://example.com'),
+      client: MockClient((_) async => http.Response(emptyPage, 200)),
+      uploadClientFactory: () => MockClient.streaming((request, bodyStream) async {
+        unawaited(bodyStream.drain<void>());
+        if (!started.isCompleted) started.complete();
+        final res = await gate.future;
+        return http.StreamedResponse(
+          Stream<List<int>>.value(utf8.encode(res.body)),
+          res.statusCode,
+        );
+      }),
+    );
+    final c = WorkspaceController(
+      WorkspaceRepository(api),
+      onExpired: () async {},
+    );
+    c.selected = const Conversation(id: 'one', title: 'One');
+    c.drafts['one'] = 'keep';
+    c.attachFiles('one', [
+      XFile.fromData(Uint8List.fromList([1, 2, 3]), path: 'doc.txt'),
+    ]);
+    final future = c.send('keep');
+    await started.future;
+    expect(c.uploadProgress, isNotNull);
+    c.cancelUpload();
+    gate.complete(http.Response('{}', 500));
+    await future;
+    expect(c.error, isNull);
+    expect(c.uploadProgress, isNull);
+    expect(c.drafts['one'], 'keep');
+    expect(c.fileDrafts['one']?.length, 1);
     c.dispose();
     api.close();
   });

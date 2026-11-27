@@ -33,12 +33,14 @@ export class ListMessagesDto {
   @IsOptional() @Transform(trim) @IsString() @Length(1, 80) source?: string;
   @IsOptional() @IsString() @Length(1, 100) before?: string;
   @IsOptional() @IsString() @Length(1, 100) since?: string;
+  @IsOptional() @IsIn(['true', 'false']) includeTotal?: 'true' | 'false';
 }
 export class ListFilesDto {
   @Type(() => Number) @IsInt() @Min(1) @Max(1000000) page: number = 1;
   @Type(() => Number) @IsInt() @Min(1) @Max(100) pageSize: number = 30;
   @IsOptional() @Transform(trim) @IsString() @MaxLength(200) q?: string;
   @IsOptional() @IsIn(['image', 'attachment']) kind?: 'image' | 'attachment';
+  @IsOptional() @IsIn(['image', 'file']) category?: 'image' | 'file';
   @IsOptional() @IsIn(['newest', 'oldest', 'name', 'size']) sort?:
     'newest' | 'oldest' | 'name' | 'size';
 }

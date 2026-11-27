@@ -21,6 +21,8 @@ import { ListMessagesDto } from '../messages/messages.dto';
 import { ConversationsService } from './conversations.service';
 import { FileInterceptor, FilesInterceptor } from '@nestjs/platform-express';
 import { EventBus } from '../../events/events.service';
+import { ContentLengthGuard, MaxContentLength } from './content-length.guard';
+import { ATTACHMENT_LIMIT } from '../messages/attachments';
 import {
   ConversationDto,
   SendMessageDto,
@@ -38,7 +40,11 @@ export class ConversationsController {
   ) {}
   @Post() async create(@User() u: CurrentUser, @Body() dto: ConversationDto) {
     const result = await this.conversations.create(u.id, dto.title);
-    this.events.publish(u.id, { type: 'invalidate', scope: 'conversations', conversationId: result.id });
+    this.events.publish(u.id, {
+      type: 'invalidate',
+      scope: 'conversations',
+      conversationId: result.id,
+    });
     return result;
   }
   @Get() list(@User() u: CurrentUser, @Query() q: ListMessagesDto) {
@@ -62,23 +68,29 @@ export class ConversationsController {
   ) {
     await this.conversations.remove(u.id, id);
     this.events.publish(u.id, { type: 'invalidate', scope: 'conversations', conversationId: id });
+    this.events.publish(u.id, { type: 'invalidate', scope: 'messages', conversationId: id });
+    this.events.publish(u.id, { type: 'invalidate', scope: 'favorites', conversationId: id });
   }
   @Get(':id/messages') async history(
     @User() u: CurrentUser,
     @Param('id', new ParseUUIDPipe()) id: string,
     @Query() q: ListMessagesDto,
   ) {
-    await this.conversations.detail(u.id, id);
     return this.messages.list(u.id, q, id);
   }
   @Patch(':id/read') @HttpCode(204) async markRead(
     @User() u: CurrentUser,
     @Param('id', new ParseUUIDPipe()) id: string,
   ) {
-    await this.conversations.markRead(u.id, id);
-    this.events.publish(u.id, { type: 'invalidate', scope: 'conversations', conversationId: id });
+    const changed = await this.conversations.markRead(u.id, id);
+    if (changed > 0) {
+      this.events.publish(u.id, { type: 'invalidate', scope: 'conversations', conversationId: id });
+      this.events.publish(u.id, { type: 'invalidate', scope: 'messages', conversationId: id });
+    }
   }
   @Post(':id/attachments')
+  @UseGuards(ContentLengthGuard)
+  @MaxContentLength(ATTACHMENT_LIMIT + 512 * 1024)
   @UseInterceptors(
     FilesInterceptor('files', 5, {
       limits: { fileSize: 20 * 1024 * 1024, files: 5, fields: 3, fieldSize: 200000, parts: 8 },
@@ -100,11 +112,18 @@ export class ConversationsController {
       u.deviceId,
       dto.clientId,
     );
-    this.events.publish(u.id, { type: 'invalidate', scope: 'messages', conversationId: id });
+    this.events.publish(u.id, {
+      type: 'invalidate',
+      scope: 'messages',
+      conversationId: id,
+      messageId: result.id,
+    });
     this.events.publish(u.id, { type: 'invalidate', scope: 'conversations', conversationId: id });
     return result;
   }
   @Post(':id/images')
+  @UseGuards(ContentLengthGuard)
+  @MaxContentLength(8 * 1024 * 1024 + 512 * 1024)
   @UseInterceptors(
     FileInterceptor('image', {
       limits: { fileSize: 8 * 1024 * 1024, files: 1, fields: 2, fieldSize: 200000 },
@@ -117,8 +136,20 @@ export class ConversationsController {
     @Body() dto: SendImageDto,
   ) {
     await this.conversations.detail(u.id, id);
-    const result = await this.messages.createImage(u.id, id, file, dto.content ?? '', u.deviceId, dto.clientId);
-    this.events.publish(u.id, { type: 'invalidate', scope: 'messages', conversationId: id });
+    const result = await this.messages.createImage(
+      u.id,
+      id,
+      file,
+      dto.content ?? '',
+      u.deviceId,
+      dto.clientId,
+    );
+    this.events.publish(u.id, {
+      type: 'invalidate',
+      scope: 'messages',
+      conversationId: id,
+      messageId: result.id,
+    });
     this.events.publish(u.id, { type: 'invalidate', scope: 'conversations', conversationId: id });
     return result;
   }
@@ -139,7 +170,12 @@ export class ConversationsController {
       u.deviceId,
       id,
     );
-    this.events.publish(u.id, { type: 'invalidate', scope: 'messages', conversationId: id });
+    this.events.publish(u.id, {
+      type: 'invalidate',
+      scope: 'messages',
+      conversationId: id,
+      messageId: result.id,
+    });
     this.events.publish(u.id, { type: 'invalidate', scope: 'conversations', conversationId: id });
     return result;
   }

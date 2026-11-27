@@ -8,6 +8,7 @@ import 'workspace_repository.dart';
 import 'widgets/conversation_list.dart';
 import 'widgets/conversation_detail.dart';
 import 'widgets/favorites_view.dart';
+import 'widgets/files_view.dart';
 import 'widgets/settings_page.dart';
 import '../../models/conversation.dart';
 import '../../shared/widgets/syncbox_logo.dart';
@@ -32,6 +33,7 @@ class _WorkspacePageState extends State<WorkspacePage>
       _section = section;
       if (section == 1) _settingsVisited = true;
     });
+    controller.setSettingsOpen(section == 1);
   }
 
   @override
@@ -125,6 +127,7 @@ class _WorkspacePageState extends State<WorkspacePage>
   }
 
   Future<void> devices() async {
+    controller.setDevicesOpen(true);
     try {
       final data = await widget.connection.api!.request('/devices') as List;
       if (!mounted) return;
@@ -180,6 +183,8 @@ class _WorkspacePageState extends State<WorkspacePage>
         ScaffoldMessenger.of(context)
             .showSnackBar(const SnackBar(content: Text('读取设备失败，请重试')));
       }
+    } finally {
+      controller.setDevicesOpen(false);
     }
   }
 
@@ -195,7 +200,9 @@ class _WorkspacePageState extends State<WorkspacePage>
         final mobile =
             ['android', 'ios'].contains(widget.connection.platform) || !wide;
         final detailOpen =
-            controller.selected != null || controller.favoritesMode;
+            controller.selected != null ||
+            controller.favoritesMode ||
+            controller.filesMode;
         final showTabs = mobile && (_section == 1 || wide || !detailOpen);
         final messages = Column(
           children: [
@@ -370,6 +377,8 @@ class _WorkspacePageState extends State<WorkspacePage>
       color: const Color(0xffe7eef3),
       child: controller.favoritesMode
           ? FavoritesView(controller: controller, compact: !wide)
+          : controller.filesMode
+          ? FilesView(controller: controller, compact: !wide)
           : controller.selected == null
           ? const Center(child: Text('选择或创建会话，开始发送内容'))
           : ConversationDetail(
@@ -388,7 +397,9 @@ class _WorkspacePageState extends State<WorkspacePage>
               Expanded(child: detail),
             ],
           )
-        : controller.selected == null && !controller.favoritesMode
+        : controller.selected == null &&
+              !controller.favoritesMode &&
+              !controller.filesMode
         ? list
         : detail;
   }

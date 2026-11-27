@@ -9,9 +9,17 @@ export type SyncEvent = {
   at: number;
 };
 
+export interface SyncStreamEntry {
+  userId: string;
+  tokenHash: string;
+  deviceId?: string | null;
+  close: () => void;
+}
+
 @Injectable()
 export class EventBus {
   private readonly emitter = new EventEmitter();
+  private readonly streams = new Set<SyncStreamEntry>();
 
   constructor() {
     this.emitter.setMaxListeners(0);
@@ -24,5 +32,42 @@ export class EventBus {
   subscribe(userId: string, listener: (event: SyncEvent) => void) {
     this.emitter.on(userId, listener);
     return () => this.emitter.off(userId, listener);
+  }
+
+  registerStream(entry: SyncStreamEntry) {
+    this.streams.add(entry);
+    return () => {
+      this.streams.delete(entry);
+    };
+  }
+
+  bindStreamDevice(tokenHash: string, deviceId: string) {
+    for (const entry of this.streams) {
+      if (entry.tokenHash === tokenHash) entry.deviceId = deviceId;
+    }
+  }
+
+  revokeByTokenHash(tokenHash: string) {
+    for (const entry of [...this.streams]) {
+      if (entry.tokenHash === tokenHash) entry.close();
+    }
+  }
+
+  revokeByDeviceId(userId: string, deviceId: string) {
+    for (const entry of [...this.streams]) {
+      if (entry.userId === userId && entry.deviceId === deviceId) entry.close();
+    }
+  }
+
+  revokeOtherSessions(userId: string, keepTokenHash: string) {
+    for (const entry of [...this.streams]) {
+      if (entry.userId === userId && entry.tokenHash !== keepTokenHash) entry.close();
+    }
+  }
+
+  revokeUser(userId: string) {
+    for (const entry of [...this.streams]) {
+      if (entry.userId === userId) entry.close();
+    }
   }
 }

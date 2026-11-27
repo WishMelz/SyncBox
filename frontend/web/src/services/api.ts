@@ -1,10 +1,10 @@
 export class ApiError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string,
-    public readonly code?: string,
-  ) {
+  readonly status: number;
+  readonly code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(message);
+    this.status = status;
+    this.code = code;
   }
 }
 // Always use the current origin; Vite/Nginx owns backend routing.

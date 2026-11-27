@@ -5,6 +5,8 @@ import { DatabaseService } from '../../database/database.service';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { LoginDto, SetupDto } from './auth.dto';
 import { hashPassword, verifyPassword } from './password';
+import { EventBus } from '../../events/events.service';
+import { PresenceTracker } from './presence.tracker';
 
 export interface CurrentUser {
   id: string;
@@ -22,7 +24,8 @@ interface UserRow {
   totp_secret?: string | null;
 }
 const SESSION_SECONDS = 7 * 24 * 60 * 60;
-const digest = (token: string) => createHash('sha256').update(token).digest('hex');
+export const tokenDigest = (token: string) => createHash('sha256').update(token).digest('hex');
+const digest = tokenDigest;
 const publicUser = (row: UserRow): CurrentUser => ({
   id: row.id,
   username: row.username,
@@ -32,7 +35,11 @@ const publicUser = (row: UserRow): CurrentUser => ({
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly events: EventBus,
+    private readonly presence: PresenceTracker,
+  ) {}
 
   async status() {
     const [row] = await this.db.query('SELECT COUNT(*) AS total FROM users');
@@ -148,23 +155,26 @@ export class AuthService {
     return row;
   }
 
-  async authenticate(token: string): Promise<CurrentUser> {
+  async validateSession(token: string, touchPresence = true): Promise<CurrentUser> {
     if (!/^[a-f0-9]{64}$/.test(token)) throw new UnauthorizedException('登录已失效，请重新登录');
     const rows: (UserRow & { device_id: string | null })[] = await this.db.query(
       `SELECT u.*, s.device_id FROM users u JOIN sessions s ON s.user_id = u.id WHERE s.token_hash = ? AND s.expires_at > ?`,
       [digest(token), Date.now()],
     );
     if (!rows[0]) throw new UnauthorizedException('登录已失效，请重新登录');
-    if (rows[0].device_id)
-      await this.db.query('UPDATE devices SET last_seen_at = ? WHERE id = ? AND user_id = ?', [
-        new Date().toISOString(),
-        rows[0].device_id,
-        rows[0].id,
-      ]);
+    if (touchPresence && rows[0].device_id) {
+      await this.presence.touch(rows[0].id, rows[0].device_id, this.db);
+    }
     return { ...publicUser(rows[0]), deviceId: rows[0].device_id };
   }
 
+  async authenticate(token: string): Promise<CurrentUser> {
+    return this.validateSession(token, true);
+  }
+
   async logout(token: string) {
-    await this.db.query('DELETE FROM sessions WHERE token_hash = ?', [digest(token)]);
+    const hash = digest(token);
+    await this.db.query('DELETE FROM sessions WHERE token_hash = ?', [hash]);
+    this.events.revokeByTokenHash(hash);
   }
 }

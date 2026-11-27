@@ -1,7 +1,7 @@
 name: syncbox
 description: Private cross-device messaging for Android and Windows.
 publish_to: none
-version: 1.0.4+5
+version: 1.0.5+6
 environment:
   sdk: ^3.13.0
 dependencies:

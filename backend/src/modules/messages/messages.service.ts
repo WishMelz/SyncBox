@@ -1,4 +1,9 @@
-import { attachmentMetadataSQL, prepareAttachments, type AttachmentUpload } from './attachments';
+import {
+  attachmentMetadataSQL,
+  prepareAttachments,
+  previewSemaphore,
+  type AttachmentUpload,
+} from './attachments';
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DatabaseService } from '../../database/database.service';
 import { randomUUID } from 'node:crypto';
@@ -240,16 +245,27 @@ export class MessagesService {
       rangeClauses.push('(created_at > ? OR (created_at = ? AND id >= ?))');
       rangeArgs.push(since[0], since[0], since[1]);
     }
+    const includeTotal = query.includeTotal !== 'false';
     return this.db.transaction(async (manager) => {
-      const [count]: { total: number }[] = await manager.query(
-        `SELECT COUNT(*) AS total FROM messages WHERE ${where}`,
-        args,
-      );
+      if (conversationId) {
+        const owned = await manager.query(
+          'SELECT id FROM conversations WHERE id = ? AND user_id = ?',
+          [conversationId, userId],
+        );
+        if (!owned[0]) throw new NotFoundException('会话不存在');
+      }
+      let total: number | undefined;
+      if (includeTotal) {
+        const [count]: { total: number }[] = await manager.query(
+          `SELECT COUNT(*) AS total FROM messages WHERE ${where}`,
+          args,
+        );
+        total = count?.total ?? 0;
+      }
       const rows: MessageRow[] = await manager.query(
         `SELECT messages.*, (SELECT c.title FROM conversations c WHERE c.id=messages.conversation_id AND c.user_id=messages.user_id) AS conversation_title, ${attachmentMetadataSQL} AS attachments_json, i.mime_type, i.width, i.height, i.size FROM messages LEFT JOIN message_images i ON i.message_id=messages.id WHERE ${rangeClauses.join(' AND ')} ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
         [...rangeArgs, query.pageSize + 1, (query.page - 1) * query.pageSize],
       );
-      const total = count?.total ?? 0;
       const visible = rows.slice(0, query.pageSize),
         last = visible.at(-1);
       const hasMore = rows.length > query.pageSize;
@@ -259,10 +275,9 @@ export class MessagesService {
           const { content, ...item } = serialize(row);
           return { ...item, preview: Array.from(content).slice(0, 160).join('') };
         }),
-        total,
+        ...(total === undefined ? {} : { total, totalPages: Math.ceil(total / query.pageSize) }),
         page: query.page,
         pageSize: query.pageSize,
-        totalPages: Math.ceil(total / query.pageSize),
         hasMore,
         nextCursor: hasMore && last ? `${last.created_at}|${last.id}` : null,
       };
@@ -270,7 +285,9 @@ export class MessagesService {
   }
   async listFiles(userId: string, query: ListFilesDto) {
     const union = `(
-      SELECT a.id AS file_id,a.message_id,'attachment' AS kind,a.name,a.mime_type,a.size,
+      SELECT a.id AS file_id,a.message_id,'attachment' AS kind,
+        CASE WHEN a.preview IS NOT NULL AND a.mime_type LIKE 'image/%' THEN 'image' ELSE 'file' END AS category,
+        a.name,a.mime_type,a.size,
         CASE WHEN a.preview IS NOT NULL THEN 1 ELSE 0 END AS has_preview,a.width,a.height,
         m.conversation_id,c.title AS conversation_title,m.content,m.created_at
       FROM message_attachments a
@@ -278,7 +295,9 @@ export class MessagesService {
       JOIN conversations c ON c.id=m.conversation_id AND c.user_id=m.user_id
       WHERE m.user_id=? AND a.deleted_at IS NULL
       UNION ALL
-      SELECT m.id AS file_id,m.id AS message_id,'image' AS kind,'图片' AS name,i.mime_type,i.size,
+      SELECT m.id AS file_id,m.id AS message_id,'image' AS kind,
+        'image' AS category,
+        '图片' AS name,i.mime_type,i.size,
         1 AS has_preview,i.width,i.height,m.conversation_id,c.title AS conversation_title,
         m.content,m.created_at
       FROM message_images i
@@ -291,6 +310,10 @@ export class MessagesService {
     if (query.kind) {
       clauses.push('kind=?');
       args.push(query.kind);
+    }
+    if (query.category) {
+      clauses.push('category=?');
+      args.push(query.category);
     }
     if (query.q) {
       const term = `%${query.q.replace(/[\\%_]/g, '\\$&')}%`;
@@ -311,7 +334,7 @@ export class MessagesService {
       args,
     );
     const rows = await this.db.query(
-      `SELECT file_id, message_id, kind, name, mime_type, size, has_preview, width, height,
+      `SELECT file_id, message_id, kind, category, name, mime_type, size, has_preview, width, height,
         conversation_id, conversation_title, created_at
        FROM ${union} WHERE ${where}
        ORDER BY ${orderBy} LIMIT ? OFFSET ?`,
@@ -323,6 +346,7 @@ export class MessagesService {
         id: row.file_id,
         messageId: row.message_id,
         kind: row.kind,
+        category: row.category,
         name: row.name,
         mimeType: row.mime_type,
         size: row.size,
@@ -369,18 +393,19 @@ export class MessagesService {
   }
 
   async attachment(userId: string, messageId: string, id: string, preview = false) {
-    return this.db.transaction(async (m) => {
-      const [row] = await m.query(
-        `SELECT ${preview ? 'a.preview' : 'a.data'} AS data,a.name FROM message_attachments a JOIN messages m ON m.id=a.message_id WHERE m.id=? AND a.id=? AND m.user_id=? AND a.deleted_at IS NULL`,
-        [messageId, id, userId],
-      );
-      if (!row?.data) throw new NotFoundException('文件不存在或已被自动清理');
-      await m.query('UPDATE message_attachments SET last_accessed_at=? WHERE id=?', [
-        Date.now(),
+    const [row] = await this.db.query(
+      `SELECT ${preview ? 'a.preview' : 'a.data'} AS data,a.name,a.last_accessed_at FROM message_attachments a JOIN messages m ON m.id=a.message_id WHERE m.id=? AND a.id=? AND m.user_id=? AND a.deleted_at IS NULL`,
+      [messageId, id, userId],
+    );
+    if (!row?.data) throw new NotFoundException('文件不存在或已被自动清理');
+    const now = Date.now();
+    if (now - Number(row.last_accessed_at ?? 0) >= 3_600_000) {
+      await this.db.query('UPDATE message_attachments SET last_accessed_at=? WHERE id=?', [
+        now,
         id,
       ]);
-      return row;
-    });
+    }
+    return row;
   }
 
   async createImage(
@@ -394,22 +419,24 @@ export class MessagesService {
     if (!file?.buffer?.length) throw new BadRequestException('请选择图片');
     let image: ImageUpload;
     try {
-      const input = sharp(file.buffer, { limitInputPixels: 24_000_000, failOn: 'warning' });
-      const metadata = await input.metadata();
-      if (!['jpeg', 'png', 'webp', 'gif'].includes(metadata.format ?? ''))
-        throw new Error('Unsupported image');
-      // Decode and re-encode the first frame; strip metadata and never serve active formats such as SVG.
-      const output = await input
-        .rotate()
-        .webp({ quality: 90 })
-        .toBuffer({ resolveWithObject: true });
-      if (output.data.length > 8 * 1024 * 1024) throw new Error('Image too large');
-      image = {
-        data: output.data,
-        mimeType: 'image/webp',
-        width: output.info.width,
-        height: output.info.height,
-      };
+      image = await previewSemaphore.run(async () => {
+        const input = sharp(file.buffer, { limitInputPixels: 24_000_000, failOn: 'warning' });
+        const metadata = await input.metadata();
+        if (!['jpeg', 'png', 'webp', 'gif'].includes(metadata.format ?? ''))
+          throw new Error('Unsupported image');
+        // Decode and re-encode the first frame; strip metadata and never serve active formats such as SVG.
+        const output = await input
+          .rotate()
+          .webp({ quality: 90 })
+          .toBuffer({ resolveWithObject: true });
+        if (output.data.length > 8 * 1024 * 1024) throw new Error('Image too large');
+        return {
+          data: output.data,
+          mimeType: 'image/webp',
+          width: output.info.width,
+          height: output.info.height,
+        };
+      });
     } catch {
       throw new BadRequestException(
         '图片无法解码或尺寸过大，请使用 JPEG、PNG、WebP 或 GIF（最多 2400 万像素）',
@@ -426,18 +453,19 @@ export class MessagesService {
   }
 
   async image(userId: string, id: string) {
-    return this.db.transaction(async (m) => {
-      const [row] = await m.query(
-        'SELECT i.data,i.mime_type FROM message_images i JOIN messages m ON m.id=i.message_id WHERE m.id=? AND m.user_id=?',
-        [id, userId],
-      );
-      if (!row) throw new NotFoundException('图片不存在或已被自动清理');
-      await m.query('UPDATE message_images SET last_accessed_at=? WHERE message_id=?', [
-        Date.now(),
+    const [row] = await this.db.query(
+      'SELECT i.data,i.mime_type,i.last_accessed_at FROM message_images i JOIN messages m ON m.id=i.message_id WHERE m.id=? AND m.user_id=?',
+      [id, userId],
+    );
+    if (!row) throw new NotFoundException('图片不存在或已被自动清理');
+    const now = Date.now();
+    if (now - Number(row.last_accessed_at ?? 0) >= 3_600_000) {
+      await this.db.query('UPDATE message_images SET last_accessed_at=? WHERE message_id=?', [
+        now,
         id,
       ]);
-      return row;
-    });
+    }
+    return row;
   }
 
   async update(userId: string, id: string, dto: UpdateMessageDto) {
@@ -472,8 +500,9 @@ export class MessagesService {
     return this.detail(userId, id);
   }
   async remove(userId: string, id: string) {
-    await this.detail(userId, id);
+    const existing = await this.detail(userId, id);
     await this.db.query('DELETE FROM messages WHERE id = ? AND user_id = ?', [id, userId]);
+    return { conversationId: existing.conversationId as string };
   }
   async removeAttachment(userId: string, messageId: string, attachmentId: string) {
     let conversationId: string | undefined;

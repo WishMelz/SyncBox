@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
-import { attachmentBlob } from '@/services/attachments';
 import { formatBytes } from '@/lib/attachments';
+import { mediaCache, type MediaCacheHandle } from '@/lib/media-cache';
 import type { Attachment } from '@/services/messages';
 
 export function AttachmentGalleryViewer({
@@ -40,17 +40,17 @@ export function AttachmentGalleryViewer({
   }, []);
   useEffect(() => {
     const abort = new AbortController();
-    let url = '';
+    let handle: MediaCacheHandle | null = null;
     setPreview({ id: file.id, url: '', error: false });
-    void attachmentBlob(
-      token,
-      `/messages/${messageId}/attachments/${file.id}/preview`,
-      abort.signal,
-    )
-      .then((blob) => {
-        if (abort.signal.aborted) return;
-        url = URL.createObjectURL(blob);
-        setPreview({ id: file.id, url, error: false });
+    void mediaCache
+      .acquire(token, `/messages/${messageId}/attachments/${file.id}/preview`, abort.signal)
+      .then((acquired) => {
+        if (abort.signal.aborted) {
+          acquired.release();
+          return;
+        }
+        handle = acquired;
+        setPreview({ id: file.id, url: acquired.url, error: false });
       })
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
@@ -59,7 +59,7 @@ export function AttachmentGalleryViewer({
       });
     return () => {
       abort.abort();
-      if (url) URL.revokeObjectURL(url);
+      handle?.release();
     };
   }, [token, messageId, file.id, retry]);
   const move = (direction: number) => {

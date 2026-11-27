@@ -9,5 +9,15 @@ struct AppSettings: Decodable {
     let recoveryCodesRemaining: Int
 }
 struct CleanupInput: Encodable { let enabled: Bool; let idleDays: Int }
-struct TwoFactorSetup: Decodable { let secret: String; let expiresIn: Int }
+struct TwoFactorSetup: Decodable {
+    let secret: String
+    let expiresIn: Int
+    let otpauthUri: String?
+}
 struct RecoveryCodes: Decodable { let recoveryCodes: [String] }
+struct BackupPayload: Sendable {
+    let data: Data
+    let sha256: String
+    let filename: String
+    let size: Int
+}

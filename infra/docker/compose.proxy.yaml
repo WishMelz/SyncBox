@@ -1,0 +1,31 @@
+services:
+  syncbox:
+    # Pin an explicit version in production; SQLite migrations run automatically
+    # on startup and are not reversible on image downgrade.
+    image: wishmelz/syncbox:${SYNCBOX_VERSION:-v1.0.5}
+    expose:
+      - "3000"
+    environment:
+      # Only trust the single reverse proxy hop inside the Docker network.
+      TRUST_PROXY: "true"
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 3000
+      DATABASE_PATH: /app/backend/data/syncbox.sqlite
+      STATIC_DIR: /app/frontend
+    volumes:
+      - syncbox-data:/app/backend/data
+    init: true
+    stop_grace_period: 15s
+
+  proxy:
+    image: nginx:1.27-alpine
+    depends_on:
+      - syncbox
+    ports:
+      - "${SYNCBOX_PORT:-8080}:80"
+    volumes:
+      - ./nginx.proxy.conf:/etc/nginx/conf.d/default.conf:ro
+
+volumes:
+  syncbox-data:

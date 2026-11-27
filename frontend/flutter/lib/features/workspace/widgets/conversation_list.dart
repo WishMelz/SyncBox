@@ -101,6 +101,13 @@ class ConversationList extends StatelessWidget {
           selected: controller.favoritesMode,
           onTap: controller.showFavorites,
         ),
+        ListTile(
+          dense: true,
+          leading: const Icon(Icons.folder_open_outlined),
+          title: const Text('文件'),
+          selected: controller.filesMode,
+          onTap: controller.showFiles,
+        ),
         const SizedBox(height: 8),
         Expanded(
           child: controller.conversations.isEmpty

@@ -7,6 +7,9 @@ import {
 import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseService } from '../../database/database.service';
 import { RegisterDeviceDto } from './devices.dto';
+import { EventBus } from '../../events/events.service';
+import { PresenceTracker } from '../auth/presence.tracker';
+import { tokenDigest } from '../auth/auth.service';
 
 const columns = `id,name,platform,created_at AS createdAt,last_seen_at AS lastSeenAt,
   CASE WHEN browser_fingerprint_hash IS NOT NULL OR (installation_hash IS NOT NULL AND fingerprint_hash IS NOT NULL) THEN 1 ELSE 0 END AS fingerprintBound,
@@ -19,7 +22,11 @@ const serialize = (row: any) => ({
 
 @Injectable()
 export class DevicesService {
-  constructor(private readonly db: DatabaseService) {}
+  constructor(
+    private readonly db: DatabaseService,
+    private readonly events: EventBus,
+    private readonly presence: PresenceTracker,
+  ) {}
   async register(userId: string, token: string, dto: RegisterDeviceDto) {
     const browserIdentity = dto.identityMode === 'fingerprint';
     if (browserIdentity && (dto.platform !== 'web' || !dto.fingerprint?.trim()))
@@ -34,7 +41,7 @@ export class DevicesService {
       ? createHash('sha256').update(dto.fingerprint).digest('hex')
       : null;
     const now = new Date().toISOString();
-    return this.db.transaction(async (manager) => {
+    const device = await this.db.transaction(async (manager) => {
       let existing = browserIdentity
         ? (
             await manager.query(
@@ -105,12 +112,15 @@ export class DevicesService {
       }
       await manager.query('UPDATE sessions SET device_id=? WHERE token_hash=? AND user_id=?', [
         id,
-        createHash('sha256').update(token).digest('hex'),
+        tokenDigest(token),
         userId,
       ]);
       const [device] = await manager.query(`SELECT ${columns} FROM devices WHERE id=?`, [id]);
       return serialize(device);
     });
+    this.presence.markUpdated(device.id);
+    this.events.bindStreamDevice(tokenDigest(token), device.id);
+    return device;
   }
   async list(userId: string) {
     const onlineSince = new Date(Date.now() - 90_000).toISOString();
@@ -122,12 +132,7 @@ export class DevicesService {
     return rows.map(serialize);
   }
   async heartbeat(userId: string, deviceId?: string | null) {
-    if (!deviceId) return;
-    await this.db.query('UPDATE devices SET last_seen_at=? WHERE id=? AND user_id=?', [
-      new Date().toISOString(),
-      deviceId,
-      userId,
-    ]);
+    await this.presence.touch(userId, deviceId, this.db);
   }
   async rename(userId: string, id: string, name: string) {
     const rows = await this.db.query(
@@ -135,6 +140,7 @@ export class DevicesService {
       [name, new Date().toISOString(), id, userId],
     );
     if (!rows[0]) throw new NotFoundException('设备不存在');
+    this.presence.markUpdated(id);
     return serialize(rows[0]);
   }
   async remove(userId: string, id: string) {
@@ -147,5 +153,7 @@ export class DevicesService {
       await manager.query('DELETE FROM sessions WHERE device_id = ? AND user_id = ?', [id, userId]);
       await manager.query('DELETE FROM devices WHERE id = ? AND user_id = ?', [id, userId]);
     });
+    this.presence.evict(id);
+    this.events.revokeByDeviceId(userId, id);
   }
 }

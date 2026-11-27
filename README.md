@@ -28,24 +28,27 @@ npm run check
 
 ## Docker 部署
 
-[Docker Hub 镜像 `wishmelz/syncbox`](https://hub.docker.com/r/wishmelz/syncbox) 已包含 Web 页面和后端。安装 Docker 后，直接运行，无需下载源码：
+[Docker Hub 镜像 `wishmelz/syncbox`](https://hub.docker.com/r/wishmelz/syncbox) 已包含 Web 页面和后端。安装 Docker 后可直接运行；生产环境建议固定明确镜像标签（SQLite 迁移启动时自动执行，**降级版本不可逆**，升级前建议先下载数据库备份并按 [备份恢复演练说明](docs/backup-restore.md) 验证）。
+
+### 1. 直连部署（局域网 / 直接暴露端口）
+
+将 [compose.yaml](infra/docker/compose.yaml) 单独保存到部署目录并运行：
 
 ```sh
-docker run -d --name syncbox --pull=always \
-  -p 8080:3000 \
-  -v syncbox-data:/app/backend/data \
-  wishmelz/syncbox:latest
+SYNCBOX_VERSION=v1.0.5 docker compose up -d --pull always
 ```
 
-打开 `http://localhost:8080/`。其他设备使用 `http://服务器局域网IP:8080/`。要换端口，只改 `8080`，保留容器端口 `3000`。消息和附件保存在数据卷中。
+直连配置默认 `TRUST_PROXY=false`，直接读取 TCP 来源 IP 进行登录/安全操作限流，防止客户端伪造 `X-Forwarded-For` 绕过限流。可通过 `.env` 设置 `SYNCBOX_PORT=16384` 和 `SYNCBOX_VERSION`。
 
-**使用 Docker Compose：** 将 [compose.yaml](infra/docker/compose.yaml) 单独保存到部署目录，在该目录运行：
+### 2. 反向代理部署（Nginx + 内网后端）
+
+将 [compose.proxy.yaml](infra/docker/compose.proxy.yaml) 和 [nginx.proxy.conf](infra/docker/nginx.proxy.conf) 放到同一目录并运行：
 
 ```sh
-docker compose up -d --pull always
+docker compose -f compose.proxy.yaml up -d --pull always
 ```
 
-更新时在原部署目录重复执行同一条命令即可。已有 Compose 部署请沿用原配置文件的位置和项目名，以便继续使用原数据卷。需要自定义端口时，在 Compose 文件旁的 `.env` 中设置 `SYNCBOX_PORT=16384`。
+代理拓扑仅对内网暴露 `syncbox:3000`，由前段 Nginx 覆写 `X-Forwarded-For $remote_addr`、启用 `client_max_body_size 21m`、为 `/api/v1/events` 关闭 `proxy_buffering` 并延长读超时（3600s），后端在 `TRUST_PROXY=true` 下准确识别真实客户端 IP。更新时在原部署目录沿用同一配置和项目名即可保留数据卷。
 
 ## Windows 免安装版
 
@@ -87,28 +90,24 @@ SyncBox/
 
 仓库地址：[github.com/WishMelz/SyncBox](https://github.com/WishMelz/SyncBox)。GitHub Actions 会在推送 `main` 或 Pull Request 时执行检查；推送 `vMAJOR.MINOR.PATCH` 标签后，会自动构建各端测试包、发布多架构 Docker 镜像并创建 GitHub Release。首次发布前请按 [GitHub 发布说明](docs/github-release.md) 配置 Docker Hub Access Token。
 
-## Apple 客户端
+## 多端能力与交付矩阵
 
-```sh
-open frontend/apple/SyncBox.xcodeproj
-```
+| 端 / 模块 | 源码支持 | 发布包包含 | 已验收平台 |
+| --- | --- | --- | --- |
+| Backend + Web（NestJS / SQLite / React） | 单账号认证与 TOTP 两步认证、`clientId` 幂等消息/图片/多附件（最多 5 个、合计 20 MiB）、SSE 实时通知 + 会话绑定续期/撤销、文件中心（按 `category` 筛选图片/文件）、消息批注/收藏/连续游标分页、内存图片/预览 LRU 缓存、SQLite 一致性备份与 SHA-256 校验、闲置清理与阈值紧缩、`EXPLAIN QUERY PLAN` 与 41 路由 OpenAPI 契约检查 | Docker Hub 多架构镜像 `wishmelz/syncbox`（直连 `compose.yaml` 与反代 `compose.proxy.yaml` + `nginx.proxy.conf`） | 本地 Node.js 24 & GitHub Actions `ubuntu-24.04`（`npm run check`：后端 26 项集成/安全/备份测试、Web 23 项单元测试、OpenAPI 41 路由校验、TypeScript 与生产构建） |
+| Flutter（Android / Windows） | 连接/认证/唯一安装 ID、SSE 作用域精准刷新（按 `scope`+`conversationId`+`messageId` + 5 分钟核对）、连续消息历史、内存 `MemoryMediaCache`、流式 XFile 多附件上传进度与取消、文件中心视图、TOTP 验证器直连与密钥复制、SHA-256 校验数据库备份下载 | GitHub Releases `SyncBox-Android-<tag>.apk`、`SyncBox-Windows-<tag>.zip`、`SyncBox-Windows-x64-Portable-<tag>.zip` | GitHub Actions `ubuntu-24.04`（`flutter analyze` + `flutter test`）及 `windows-latest` Release 打包冒烟；代码改动后将在对应 CI 流程验证 |
+| Apple（iOS / iPadOS 17+ / macOS 14+） | 连接/认证/唯一安装 ID、SSE 作用域精准刷新 + 5 分钟核对、按消息 ID 粒度锁、连续消息历史、`NSCache` 50 MB 内存预览缓存、磁盘临时文件流式上传进度与取消、文件中心、TOTP `otpauth://` 跳转与密钥复制、SHA-256 校验数据库备份导出 | GitHub Releases 未签名包 `SyncBox-iOS-<tag>-unsigned.ipa`、`SyncBox-macOS-<tag>.zip`（真机安装需自备 Team 重签名） | GitHub Actions `macos-15`（`./scripts/apple-check.sh`：SwiftPM `SyncBoxCore` 测试、macOS 与 iOS Simulator 构建）；代码改动后将在 macOS CI 验证 |
 
-支持 iOS / iPadOS 17、macOS 14 及以上。已实现原生服务连接、首次设置/登录、共享会话、消息发送/搜索/复制/收藏和设备列表；登录后记住设备并自动恢复会话，不保存密码、不使用钥匙串，前台每 5 秒同步。真机运行需配置签名 Team。详见 [Apple 开发说明](frontend/apple/README.md)，验证脚本为 `scripts/apple-check.sh`。
+文档总览与导航见 [SyncBox 文档索引](SyncBox文档.md)。
 
-## 当前范围
+## 同步、安全与附件说明
 
-已提供响应式工作台、首次设置/登录与会话接口、设备管理、多设备共享消息的增删改查/搜索接口，以及单镜像部署配置。Web 已接入会话与消息页面；已支持图片消息；Web 已支持通用附件上传和设置面板；WebSocket 实时推送尚未实现。原 `SyncBox文档.md` 保留，当前为空。
+- **实时同步**：全端使用带 Bearer 鉴权的 `GET /api/v1/events` SSE 长连接，按 `scope`、`conversationId`、`messageId` 合并路由变更并做 5 分钟区间核对；断线自动退避重连，Web/原生均区分“实时同步”与“定时同步”/“连接中断”状态，SSE 心跳同步续期设备在线状态，登出/删设备/改 2FA 会主动断开旧连接。详见 [同步事件影响矩阵](docs/architecture/sync-event-matrix.md)。
+- **附件与缓存**：三端统一支持通用多附件收发（1–5 个、合计 ≤ 20 MiB）与旧单图片接口兼容；文件名保留、服务端信号量限制图片预览并发，文件中心通过 `category=image|file` 统合展示新旧图片和文件。三端图片与预览缓存严格限制在内存（≤ 50 MB）并按 `origin + token` 隔离，不落盘，退出登录或删除后立即清除。
+- **备份、安全与凭据**：Web 会话令牌保存在 `sessionStorage`，桌面端持久化连接配置，原生端各自使用系统安全存储或受限沙箱文件保存会话；公开/敏感安全接口与备份接口均带速率限制（`SecurityRateLimitService` + `@Throttle` + 备份单飞保护），备份响应附带 `X-SyncBox-Backup-SHA256` 校验摘要。
 
-## 会话工作空间
+## 客户端开发说明
 
-Web 已提供首次设置和登录、会话创建/重命名/删除、消息发送、搜索、复制、收藏及设备列表。手机单栏、PC 双栏。每 5 秒自动读取同账号其他设备的新内容，所有请求通过同域 /api 代理。会话删除会连同消息永久删除，界面提供确认。登录凭证只保存在当前标签页 sessionStorage，Web 设备 ID 由后端按浏览器指纹匹配，localStorage 只缓存升级提示；退出会撤销当前会话。
-
-## Android / Windows 客户端
-
-Flutter 框架位于 `frontend/flutter/`，支持连接私人后端、唯一账号首次设置/登录、会话与消息收发。运行前安装 Flutter 和对应平台工具链。详细目录、启动、打包步骤及已验证范围见 [Flutter 开发说明](frontend/flutter/README.md)。跨平台检查脚本为 `scripts/flutter-check.sh` / `scripts/flutter-check.ps1`。
-
-## 图片消息
-
-Web 现已使用通用附件接口，支持选择图片及其他文件、粘贴图片、拖入文件、发送前预览/移除、上传进度、文件名搜索和原文件下载；每条最多 5 个附件，合计最多 20 MiB。原文件及独立图片预览存储在 SQLite，读取需要登录。
-
-Apple / Flutter 当前继续使用旧单图片接口（单张最多 8 MiB，后端转 WebP），历史图片仍可读取。本阶段优先完善 Web，其他端通用附件收发与下载待后续同步；旧客户端能看到附件消息的说明或文件名摘要。原有安装包需重新构建才能使用已实现的 App 新功能。
+- **Apple 客户端**：使用 `open frontend/apple/SyncBox.xcodeproj` 或运行 `./scripts/apple-check.sh`，详细架构与认证/测试说明见 [Apple 开发说明](frontend/apple/README.md)。
+- **Flutter 客户端**：源码位于 `frontend/flutter/`，跨平台检查脚本为 `scripts/flutter-check.sh` / `scripts/flutter-check.ps1`，详细说明见 [Flutter 开发说明](frontend/flutter/README.md)。
+- **Web 客户端**：详见 [Web 开发说明](frontend/web/README.md)；接口说明见 [API 文档](docs/api/README.md)。

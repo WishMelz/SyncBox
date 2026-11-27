@@ -4,6 +4,7 @@ export interface FileItem {
   id: string;
   messageId: string;
   kind: 'image' | 'attachment';
+  category: 'image' | 'file';
   name: string;
   mimeType: string;
   size: number;
@@ -29,6 +30,7 @@ export const filesApi = {
     query: {
       q?: string;
       kind?: 'image' | 'attachment';
+      category?: 'image' | 'file';
       page?: number;
       sort?: 'newest' | 'oldest' | 'name' | 'size';
     },
@@ -40,6 +42,7 @@ export const filesApi = {
     });
     if (query.q) params.set('q', query.q);
     if (query.kind) params.set('kind', query.kind);
+    if (query.category) params.set('category', query.category);
     if (query.sort) params.set('sort', query.sort);
     return apiRequest<FilePage>(`/messages/files?${params}`, {
       token,

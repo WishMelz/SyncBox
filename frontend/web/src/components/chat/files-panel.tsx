@@ -8,19 +8,24 @@ import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { MessageImage } from './message-image';
 import { MessageAttachments } from './message-attachments';
 import type { Attachment } from '@/services/messages';
+import { mediaCache } from '@/lib/media-cache';
 
-type FileKind = 'all' | 'image' | 'attachment';
+type FileCategory = 'all' | 'image' | 'file';
 type FileSort = 'newest' | 'oldest' | 'name' | 'size';
 
 export function FilesPanel({
   token,
+  syncRevision = 0,
   onClose,
   onOpenConversation,
+  onFileDeleted,
   onExpired,
 }: {
   token: string;
+  syncRevision?: number;
   onClose: () => void;
   onOpenConversation: (conversationId: string) => void;
+  onFileDeleted?: (file: FileItem) => void;
   onExpired: () => void;
 }) {
   const [data, setData] = useState<FilePage>({
@@ -32,7 +37,7 @@ export function FilesPanel({
   });
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
-  const [kind, setKind] = useState<FileKind>('all');
+  const [category, setCategory] = useState<FileCategory>('all');
   const [sort, setSort] = useState<FileSort>('newest');
   const [page, setPage] = useState(1);
   const [refresh, setRefresh] = useState(0);
@@ -41,6 +46,9 @@ export function FilesPanel({
   const [fileToDelete, setFileToDelete] = useState<FileItem | null>(null);
   const [deleting, setDeleting] = useState(false);
   const panel = useRef<HTMLElement>(null);
+  const lastFilterKey = useRef('');
+  const expire = useRef(onExpired);
+  expire.current = onExpired;
 
   useEffect(() => {
     const previous = document.activeElement as HTMLElement | null;
@@ -57,10 +65,17 @@ export function FilesPanel({
   useEffect(() => {
     const controller = new AbortController();
     let active = true;
-    setLoading(true);
+    const filterKey = `${token}:${query}:${page}:${category}:${sort}:${refresh}`;
+    const foreground = lastFilterKey.current !== filterKey;
+    lastFilterKey.current = filterKey;
+    if (foreground) setLoading(true);
     setError('');
     void filesApi
-      .list(token, { q: query, page, sort, ...(kind === 'all' ? {} : { kind }) }, controller.signal)
+      .list(
+        token,
+        { q: query, page, sort, ...(category === 'all' ? {} : { category }) },
+        controller.signal,
+      )
       .then((result) => {
         if (!active) return;
         if (page > 1 && !result.items.length) setPage(Math.max(1, result.totalPages));
@@ -68,17 +83,17 @@ export function FilesPanel({
       })
       .catch((reason: unknown) => {
         if (!active || controller.signal.aborted) return;
-        if (reason instanceof ApiError && reason.status === 401) onExpired();
+        if (reason instanceof ApiError && reason.status === 401) expire.current();
         else setError('文件加载失败，请重试。');
       })
       .finally(() => {
-        if (active) setLoading(false);
+        if (active && foreground) setLoading(false);
       });
     return () => {
       active = false;
       controller.abort();
     };
-  }, [token, query, page, kind, sort, refresh, onExpired]);
+  }, [token, query, page, category, sort, refresh, syncRevision]);
 
   function attachment(file: FileItem): Attachment {
     return {
@@ -98,6 +113,12 @@ export function FilesPanel({
     setError('');
     try {
       await filesApi.remove(token, file);
+      mediaCache.invalidatePath(
+        file.kind === 'image'
+          ? `/messages/${encodeURIComponent(file.messageId)}/image`
+          : `/messages/${encodeURIComponent(file.messageId)}/attachments/${encodeURIComponent(file.id)}`,
+      );
+      onFileDeleted?.(file);
       setData((current) => ({
         ...current,
         items: current.items.filter((item) => !(item.id === file.id && item.kind === file.kind)),
@@ -150,16 +171,16 @@ export function FilesPanel({
               [
                 ['all', '全部'],
                 ['image', '图片'],
-                ['attachment', '附件'],
+                ['file', '文件'],
               ] as const
             ).map(([value, label]) => (
               <button
                 key={value}
                 role="tab"
-                aria-selected={kind === value}
-                className={kind === value ? 'active' : ''}
+                aria-selected={category === value}
+                className={category === value ? 'active' : ''}
                 onClick={() => {
-                  setKind(value);
+                  setCategory(value);
                   setPage(1);
                 }}
               >
@@ -242,7 +263,7 @@ export function FilesPanel({
                     />
                   )}
                   <div className="file-entry-meta">
-                    {file.kind === 'image' ? <FileImage size={15} /> : <FileText size={15} />}
+                    {file.category === 'image' ? <FileImage size={15} /> : <FileText size={15} />}
                     <span>
                       <strong title={file.name}>
                         <HighlightText text={file.name} query={query} />

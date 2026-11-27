@@ -41,16 +41,16 @@ export const conversationsApi = {
     id: string,
     q = '',
     page = 1,
-    cursors: { before?: string; since?: string } = {},
+    cursors: { before?: string; since?: string; includeTotal?: boolean } = {},
   ) =>
     apiRequest<Page<Message>>(
       `/conversations/${id}/messages?${new URLSearchParams({
         q,
         page: String(page),
         pageSize: '30',
-        ...(Object.fromEntries(
-          Object.entries(cursors).filter(([, value]) => value !== undefined),
-        ) as Record<string, string>),
+        ...(cursors.before !== undefined ? { before: cursors.before } : {}),
+        ...(cursors.since !== undefined ? { since: cursors.since } : {}),
+        ...(cursors.includeTotal === false ? { includeTotal: 'false' } : {}),
       })}`,
       { token },
     ),
