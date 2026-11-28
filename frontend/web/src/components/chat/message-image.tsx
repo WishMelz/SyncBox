@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Download, X } from 'lucide-react';
 import type { Message } from '@/services/messages';
 import { mediaCache, type MediaCacheHandle } from '@/lib/media-cache';
@@ -102,25 +103,32 @@ export function MessageImage({
           <Download size={15} /> 保存图片
         </a>
       )}
-      {expanded && (
-        <div
-          className="image-lightbox"
-          role="dialog"
-          aria-modal="true"
-          aria-label="图片预览"
-          onClick={() => setExpanded(false)}
-        >
-          <button
-            type="button"
-            autoFocus
-            aria-label="关闭图片预览"
-            onClick={() => setExpanded(false)}
+      {expanded &&
+        createPortal(
+          <div
+            className="image-lightbox"
+            role="dialog"
+            aria-modal="true"
+            aria-label="图片预览"
+            onContextMenu={(event) => event.stopPropagation()}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              if (event.target === event.currentTarget) setExpanded(false);
+            }}
           >
-            <X />
-          </button>
-          <img src={url} alt="消息图片大图" onClick={(e) => e.stopPropagation()} />
-        </div>
-      )}
+            <button
+              type="button"
+              autoFocus
+              aria-label="关闭图片预览"
+              onClick={() => setExpanded(false)}
+            >
+              <X />
+            </button>
+            <img src={url} alt="消息图片大图" />
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

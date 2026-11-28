@@ -72,6 +72,9 @@ export function AttachmentGalleryViewer({
       ref={dialog}
       className="attachment-gallery-viewer"
       aria-label="图片预览"
+      onContextMenu={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
       onCancel={(event) => {
         event.preventDefault();
         onClose();

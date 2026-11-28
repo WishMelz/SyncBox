@@ -2,7 +2,7 @@ services:
   syncbox:
     # Pin an explicit version in production; SQLite migrations run automatically
     # on startup and are not reversible on image downgrade.
-    image: wishmelz/syncbox:${SYNCBOX_VERSION:-v1.0.6}
+    image: wishmelz/syncbox:${SYNCBOX_VERSION:-v1.0.7}
     ports:
       - "${SYNCBOX_PORT:-8080}:3000"
     environment:

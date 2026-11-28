@@ -35,7 +35,7 @@ npm run check
 将 [compose.yaml](infra/docker/compose.yaml) 单独保存到部署目录并运行：
 
 ```sh
-SYNCBOX_VERSION=v1.0.6 docker compose up -d --pull always
+SYNCBOX_VERSION=v1.0.7 docker compose up -d --pull always
 ```
 
 直连配置默认 `TRUST_PROXY=false`，直接读取 TCP 来源 IP 进行登录/安全操作限流，防止客户端伪造 `X-Forwarded-For` 绕过限流。可通过 `.env` 设置 `SYNCBOX_PORT=16384` 和 `SYNCBOX_VERSION`。
