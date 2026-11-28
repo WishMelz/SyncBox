@@ -581,6 +581,18 @@ try {
           .evaluate((img) => img.complete && img.naturalWidth > 0),
         true,
       );
+      assert.equal(
+        await page
+          .locator('.image-lightbox img')
+          .evaluate((img) =>
+            img.dispatchEvent(
+              new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }),
+            ),
+          ),
+        true,
+        'single-image preview should allow native browser context menu',
+      );
+      assert.equal(await page.locator('.message-context-menu').count(), 0);
       await page.getByRole('button', { name: '关闭图片预览' }).click();
       assert.equal(await page.getByRole('dialog', { name: '图片预览' }).count(), 0);
       await context.close();
@@ -599,6 +611,19 @@ try {
         .getByRole('button', { name: /^查看大图/ })
         .click();
       await page.getByRole('dialog', { name: '图片预览' }).waitFor();
+      await page.locator('.gallery-stage img').waitFor();
+      assert.equal(
+        await page
+          .locator('.gallery-stage img')
+          .evaluate((img) =>
+            img.dispatchEvent(
+              new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }),
+            ),
+          ),
+        true,
+        'gallery image preview should allow native browser context menu',
+      );
+      assert.equal(await page.locator('.message-context-menu').count(), 0);
       assert.equal(await page.getByText('1 / 3', { exact: true }).count(), 1);
       await page.getByRole('button', { name: '下一张图片' }).click();
       assert.equal(await page.getByText('2 / 3', { exact: true }).count(), 1);
